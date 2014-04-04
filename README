@@ -5,5 +5,8 @@
 
   Example: Placing a bootable DOS floppy image in the proper location as
            defined in the menu will boot the system/VM to a DOS prompt.
-           Some ISO images may be booted in the same way.
+           Some ISO images may be booted in the same way. I plan to create
+           future projects(s) that will bring some of the menus to life
+           illustrating OS installs, manual and automated, such as kickstart,
+           autoyast and preeceeding.
 
