@@ -1,0 +1,263 @@
+#!/bin/bash
+
+##
+##  Introduction:
+##    My prefered SHELL is ksh, as we have had a long and illustrious
+##    career together; however I have used BASH here to keep things
+##    simpler for this example project.
+##
+##     I.E. show my scripting skills using a shell that should be
+##          on any linux system in existance by default.
+##
+##    If I were writting an applicaton I would use Perl OR Java.
+##
+
+##
+##  NOTES: This script was written for and tested on a VM installed
+##         with a default CentOS 6.5; it should work equally well on
+##         physical hardware running the same release. I fully
+##         expect it will run on Red-Hat as well as earlier versions.
+##
+##          I.E. It should work on 4.x-6.x
+##
+##         This script is not comprehensive or production ready. It
+##         makes too many assumptions and provide not options or
+##         flexibility for alternatives. It simply shows one simple way
+##         to build a PXE boot server.
+##
+##  ASSUMPTIONS:
+##   1) The system we will demo PXE on is networked (kind of the point)
+##   2) has standard DHCP services from a local router [ home OR office etc ]
+##      ( we don't need fixed IP's for this)
+##   3) other system(s) with PXE client enabled NIC's are available
+##      (we need the server and at least one client)
+##
+
+##
+##  The Steps we (AKA: YOU) need to take to bring PXE booting to life.
+##
+##   1) Build a system/VM using a Linux Distro that this
+##      script supports; you must do this yourself and download
+##      this script to it. (I used CentOS "minimal-server")
+##
+##   2) My NIC was configured but not enabled to be turned on
+##      at boot. I suspect a hold-over from a desktop setup where
+##      some service allows the user to control it. All very ugly.
+##      Lets make sure we're connected to the network or there is
+##      little else we can do!
+##
+
+. ${0}-NIC
+
+#-- First NIC UP wins!
+for NIC in eth0 eth1 eth2 eth3
+do
+  TurnUpNIC $NIC && break
+done
+
+##
+##   3) Install the xinetd and tftpd services and get them up and running
+##
+
+if [ 1 -eq 0 ]
+then
+if [ -f /etc/centos-release -o -f /etc/redhat-release ]
+then
+  ST=OK
+
+  echo -n "  Installing TFTPD & XINETD Svcs : "
+  /usr/bin/yum --assumeyes install tftp-server > /tmp/tftpd-server-install.log 2>&1
+  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
+  echo "$ST [ check: /tmp/tftpd-server-install.log ]"
+
+  echo -n "  Enabling TFTPD                 : "
+  /sbin/chkconfig tftp on  > /tmp/tftpd-server-enable.log 2>&1
+  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
+  echo "$ST [ check: /tmp/tftpd-server-enable.log ]"
+
+  echo -n "  Start/Restart XINTD            : "
+  /sbin/service xinetd restart > /tmp/xinetd-service.log 2>&1
+  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
+  echo "$ST [ check: /tmp/xinetd-service.log ]"
+
+  echo -n "  Add iptables rule for tftpd    : "
+  /sbin/iptables --list --line-numbers | grep -q tftp || \
+  /sbin/iptables --insert INPUT 5 -m state --state NEW --proto udp --dport 69 -j ACCEPT > /tmp/iptables.log 2>&1
+  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
+  echo "$ST [ check: /tmp/iptables.log ]"
+
+  echo -n "  Save iptabels rules            : "
+  /sbin/iptables-save > /etc/sysconfig/iptables 2>> /tmp/iptables.log
+  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
+  echo "$ST [ check: /tmp/iptables.log ]"
+fi
+fi
+
+
+##
+##   4) Install syslinux; it includes the binares to build PXE boot-chains
+##      And populate tftpboot with these binaries and our example menus
+##
+
+if [ 1 -eq 0 ]
+then
+if [ -f /etc/centos-release -o -f /etc/redhat-release ]
+then
+  ST=OK
+
+  echo -n "  Installing SYSLINUX software   : "
+  /usr/bin/yum --assumeyes install syslinux    > /tmp/syslinux-install.log 2>&1
+  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
+  echo "$ST [ check: /tmp/syslinux-install.log ]"
+
+  #-- Prefare the /var/lib/tftpboot/ dir for usage
+  ##   (populate it!)
+  (
+    TFTPBOOTSRC=$(dirname $0)/../tftpboot
+    TFTPBOOTTGT=/var/lib/tftpboot
+
+    [ -d $TFTPBOOTSRC ] || { echo 'Failed to find menus'; exit 1; }
+    [ -d $TFTPBOOTTGT ] || { echo 'Failed to find tftpboot dir'; exit 1; }
+
+    cd $TFTPBOOTSRC || exit 1
+    echo -n "  populating tftpboot PXE menus  : "
+    find . -depth -print | cpio -pudm $TFTPBOOTTGT > /tmp/populate-tftpboot.log 2>&1
+    [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
+    echo "$ST [ check: /tmp/populate-tftpboot.log ]"
+
+    cd /var/lib/tftpboot || exit 1
+    ST='OK  '
+    echo -n "  Populating tftpboot binaries   : "
+    (
+      [ -f pxelinux.0   ] || { ln /usr/share/syslinux/pxelinux.0   || ST=FAIL; }
+      [ -d bin ] || mkdir bin
+      cd bin || ST=FAIL
+      [ -f menu.c32     ] || { ln /usr/share/syslinux/menu.c32     || ST=FAIL; }
+      [ -f vesamenu.c32 ] || { ln /usr/share/syslinux/vesamenu.c32 || ST=FAIL; }
+      [ -f memdisk      ] || { ln /usr/share/syslinux/memdisk      || ST=FAIL; }
+    ) >> /tmp/populate-tftpboot.log 2>&1
+    echo "$ST [ check: /tmp/populate-tftpboot.log ]"
+  )
+fi
+fi
+
+
+##
+##   6) Install and turn up the DHCP service
+##      We need this to tell the PXE booting system what to do
+##      (I.E. here is you IP sir, go and get this file ... )
+##
+##   BUGS: I assume the subnet is at least a class "C" in size!
+##         (anything smaller and the computed range may be wrong)
+##
+
+if [ 1 -eq 0 ]
+then
+if [ -f /etc/centos-release -o -f /etc/redhat-release ]
+then
+  ST=OK
+
+  echo -n "  Installing DHCP server         : "
+  /usr/bin/yum --assumeyes install dhcp    > /tmp/dhcpd-install.log 2>&1
+  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
+  echo "$ST [ check: /tmp/dhcpd-install.log ]"
+
+# iptables --verbose --insert INPUT 5 -m state --state NEW --proto udp --dport 67 -j ACCEPT
+#  (i did not have to do this for DHCP, initial packets are bcast and make it through,
+#   my best guess)
+fi
+fi
+
+
+#-- Compute Network values from the "UP" NIC
+##   use them to build a simple dhcpd.conf file.
+
+echo -n "  Building dhcpd.conf file       : "
+
+NIC_ADDR=$(getNicIP   $NIC)
+NIC_MASK=$(getNicMask $NIC)
+NIC_BCST=$(getNicBcst $NIC)
+
+declare -a ADDR=( $(echo $NIC_ADDR|sed 's/[.]/ /g') )
+declare -a MASK=( $(echo $NIC_MASK|sed 's/[.]/ /g') )
+declare -a BCST=( $(echo $NIC_BCST|sed 's/[.]/ /g') )
+
+NIC_NET="$(( ${ADDR[0]} & ${MASK[0]} )).$(( ${ADDR[1]} & ${MASK[1]} ))"
+NIC_NET="${NIC_NET}.$(( ${ADDR[2]} & ${MASK[2]} ))"
+NIC_NET="${NIC_NET}.$(( ${ADDR[3]} & ${MASK[3]} ))"
+
+NIC_NST="$(( ${ADDR[0]} & ${MASK[0]} )).$(( ${ADDR[1]} & ${MASK[1]} ))"
+NIC_NST="${NIC_NST}.$(( ${ADDR[2]} & ${MASK[2]} ))"
+NIC_NST="${NIC_NST}.$(( ( ${ADDR[3]} & ${MASK[3]} ) + 1 ))"
+
+NIC_NED="${BCST[0]}.${BCST[1]}.${BCST[2]}.$(( ${BCST[3]} - 1 ))"
+
+NIC_RNG="${BCST[0]}.${BCST[1]}.${BCST[2]}.240"
+
+NIC_RTR=$( netstat -rn|grep $NIC|grep '^0.0.0.0'|awk '{print $2}' )
+
+# echo "  Using $NIC for DHCP setup: $NIC_ADDR $NIC_MASK $NIC_NET"
+# echo "     Starting at: $NIC_NST"
+# echo "      Ends    at: $NIC_NED"
+
+cat > /tmp/dhcpd.conf <<EOF!
+#
+# DHCP Server Configuration file.
+#   see /usr/share/doc/dhcp*/dhcpd.conf.sample
+#   see 'man 5 dhcpd.conf'
+#
+
+allow booting;
+allow bootp;
+ddns-update-style interim;
+
+## GOAL: service PXE BOOTP requests only
+##   normal router will service everything else
+group {
+	# No fixed IP's here (not needed!)
+	#  (you need to change these to match your systems OR use these)
+	host pxe-client-1 { hardware ethernet 08:00:27:c1:b3:57; }
+	host pxe-client-2 { hardware ethernet 08:00:27:c1:b3:58; }
+	host pxe-client-3 { hardware ethernet 08:00:27:c1:b3:59; }
+	host pxe-client-4 { hardware ethernet 08:00:27:c1:b3:5a; }
+
+	# We'll use IP from this pool
+	subnet ${NIC_NET} netmask ${NIC_MASK} {
+		option vendor-class-identifier "PXEClient";
+		filename "pxelinux.0";
+		next-server ${NIC_ADDR};
+		range ${NIC_RNG} ${NIC_NED};
+		default-lease-time 1800;
+		max-lease-time 4800;
+		option routers ${NIC_RTR};
+		option domain-name-servers ${NIC_RTR};
+		option subnet-mask ${NIC_MASK};
+		option domain-name "ancientwizard.dyndns.org";
+		option time-offset -5;
+		option ntp-servers ${NIC_RTR};
+		option netbios-name-servers ${NIC_RTR};
+	}
+}
+
+# END
+EOF!
+
+if diff /tmp/dhcpd.conf /etc/dhcp/dhcpd.conf > /dev/null 2>&1
+then
+  echo 'OK   [ check: /tmp/dhcpd.conf ] - no change so not installed'
+else
+  if [ $( wc -l /etc/dhcp/dhcpd.conf | awk '{print $1}' ) -gt 10 ]
+  then
+    echo 'OK   [ check: /tmp/dhcpd.conf ] - existing config not overwritten'
+    echo "                                 :     ( install manually as needed ) "
+  else
+    [ -f /tmp/dhcpd.conf ] && cat /tmp/dhcpd.conf > /etc/dhcp/dhcpd.conf && \
+    /bin/rm -f /tmp/dhcpd.conf
+    [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
+    echo "$ST [ check: /tmp/dhcpd.conf ]"
+  fi
+  service dhcpd restart
+fi
+
+
+# END

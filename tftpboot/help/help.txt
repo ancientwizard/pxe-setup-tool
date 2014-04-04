@@ -1,0 +1,21 @@
+
+               --------  EXAMPLE MENU SYSTEM --------
+
+ This menu is strictly for PXE demonstration purposes and provided as part
+ of an automation script that illustrates the setup of a PXE boot server
+ on a Linux system.
+
+ I created the script as a coding example for prospective employers.
+
+ Use of this example for any other purposes is *NOT* recommended primarily
+ because the example is *simple* and only shows one of a possible hundred
+ ways PXE and the related protocols used in its support could be
+ configured.
+
+ NOTE: This is *not* kickstart or jumpstart or any other kind of system
+   building process. These technologies can be built upon PXE but they are
+   not PXE.
+
+ Signed,
+ -Ancient Wizard
+

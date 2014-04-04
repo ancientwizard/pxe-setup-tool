@@ -1,0 +1,33 @@
+MENU TITLE Ubuntu Installation Menu
+MENU BACKGROUND pxelinux.cfg/ubuntu.jpg
+MENU WIDTH 80
+MENU MARGIN 2
+
+LABEL Main Menu
+        MENU LABEL Main Menu
+        KERNEL bin/vesamenu.c32
+        APPEND pxelinux.cfg/default
+
+MENU SEPARATOR
+
+LABEL Ubuntu 12.04 x86_64 NO KS eth0
+        MENU LABEL Ubuntu 12.04 x86_64 NO KS eth0
+        KERNEL images/ubuntu/12.04/x86_64/vmlinuz
+        APPEND ks initrd=images/ubuntu/12.04/x86_64/initrd.img ramdisk_size=100000 ksdevice=eth0 ip=dhcp url --url http://xxx.xxx.xxx.xxx/mirrors/ubuntu-12.04-x86_64/
+
+LABEL Ubuntu 12.04 x86_64 NO KS eth1
+        MENU LABEL Ubuntu 12.04 x86_64 NO KS eth1
+        KERNEL images/ubuntu/12.04/x86_64/vmlinuz
+        APPEND ks initrd=images/ubuntu/12.04/x86_64/initrd.img ramdisk_size=100000 ksdevice=eth1 ip=dhcp url --url http://xxx.xxx.xxx.xxx/mirrors/ubuntu-12.04-x86_64/
+
+LABEL Ubuntu 11.04 x86_64 NO KS eth0
+        MENU LABEL Ubuntu 11.04 x86_64 NO KS eth0
+        KERNEL images/ubuntu/11.04/x86_64/vmlinuz
+        APPEND ks initrd=images/ubuntu/11.04/x86_64/initrd.img ramdisk_size=100000 ksdevice=eth0 ip=dhcp url --url http://xxx.xxx.xxx.xxx/mirrors/ubuntu-11.04-x86_64/
+
+LABEL Ubuntu 11.04 x86_64 NO KS eth1
+        MENU LABEL Ubuntu 11.04 x86_64 NO KS eth1
+        KERNEL images/ubuntu/11.04/x86_64/vmlinuz
+        APPEND ks initrd=images/ubuntu/11.04/x86_64/initrd.img ramdisk_size=100000 ksdevice=eth1 ip=dhcp url --url http://xxx.xxx.xxx.xxx/mirrors/ubuntu-11.04-x86_64/
+
+# END

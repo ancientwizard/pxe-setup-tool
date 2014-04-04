@@ -1,0 +1,95 @@
+DEFAULT bin/vesamenu.c32
+PROMPT 0
+TIMEOUT 1200
+ONTIMEOUT Windows Installation
+
+MENU TITLE Pre-Execution Environment Menu
+MENU BACKGROUND pxelinux.cfg/default.jpg
+MENU color title	1;36;44    #c0e0f000 #00000000 std
+MENU color sel		7;37;40    #ffffffff #508000ff all
+MENU color unsel	37;44      #fff5f5dc #00000000 std
+MENU WIDTH 80
+MENU MARGIN 2
+
+f1 help/help.txt
+f2 help/version.txt
+
+LABEL local
+	MENU LABEL ->> Boot Local ^Hard-Disk
+	TEXT HELP
+  This menu item will attempt to boot the "local" default Hard-Disk
+  if it is available and bootable.
+
+  <F1> - Show MENU Description / Help for this menu system
+	ENDTEXT
+	LOCALBOOT 0
+
+MENU SEPARATOR
+
+LABEL Linux Ubuntu
+	MENU LABEL ->> Install Linux - ^Ubuntu
+	TEXT HELP
+  This menu item will provide install & booting options for versions
+  of the Ubuntu "Linux" Distro.
+
+  <F1> - Show MENU Description / Help for this menu system
+	ENDTEXT
+	KERNEL bin/vesamenu.c32
+	APPEND pxelinux.cfg/ubuntu
+
+LABEL Linux Red-Hat
+	MENU LABEL ->> Install Linux - ^Red-Hat
+	TEXT HELP
+  This menu item will provide install & booting options for versions
+  of the Red-Hat "Linux" Distro.
+
+  <F1> - Show MENU Description / Help for this menu system
+	ENDTEXT
+	KERNEL bin/vesamenu.c32
+	APPEND pxelinux.cfg/red-hat
+
+LABEL Linux CentOS
+	MENU LABEL ->> Install Linux - ^CentOS
+	TEXT HELP
+  This menu item will provide install & booting options for versions
+  of the CentOS "Linux" Distro.
+
+  <F1> - Show MENU Description / Help for this menu system
+	ENDTEXT
+	KERNEL bin/vesamenu.c32
+	APPEND pxelinux.cfg/cent-os
+
+LABEL Linux Open-SUSE
+	MENU LABEL ->> Install Linux - ^Open-SUSE
+	TEXT HELP
+  This menu item will provide install & booting options for versions
+  of the Open-SUSE "Linux" Distro.
+
+  <F1> - Show MENU Description / Help for this menu system
+	ENDTEXT
+	KERNEL bin/vesamenu.c32
+	APPEND pxelinux.cfg/open-suse
+
+MENU SEPARATOR
+
+LABEL Windows Installation
+	MENU LABEL ->> Install Microsoft ^Windows
+	TEXT HELP
+  This menu item will provide install & booting options for releases
+  of the Microsoft Windows Operating environment.
+
+  <F1> - Show MENU Description / Help for this menu system
+	ENDTEXT
+	KERNEL bin/vesamenu.c32
+	APPEND pxelinux.cfg/windows
+
+MENU SEPARATOR
+
+LABEL TOOLS
+	MENU LABEL ---- ^TOOLS ----
+	TEXT HELP
+	A menu of "Tools" available for auto booting.
+	ENDTEXT
+	KERNEL bin/vesamenu.c32
+	APPEND pxelinux.cfg/tools
+

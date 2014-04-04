@@ -1,0 +1,37 @@
+MENU TITLE Windows Installation Menu
+MENU BACKGROUND pxelinux.cfg/windows.jpg
+MENU WIDTH 80
+MENU MARGIN 2
+
+LABEL Main Menu
+        MENU LABEL Main Menu
+	TEXT HELP
+	NOTE: This is not a "completed" Menu!
+	      It is however possible to network install Windows.
+	ENDTEXT
+        KERNEL bin/vesamenu.c32
+        APPEND pxelinux.cfg/default
+
+MENU SEPARATOR
+
+LABEL Windows 8
+        MENU LABEL Windows 8
+        KERNEL images/win/8
+        APPEND http://xxx.xxx.xxx.xxx/mirrors/Win8/
+
+LABEL Windows 7
+        MENU LABEL Windows 7
+        KERNEL images/win/7
+        APPEND http://xxx.xxx.xxx.xxx/mirrors/Win7/
+
+LABEL Windows XP
+        MENU LABEL Windows XP
+        KERNEL images/win/xp
+        APPEND http://xxx.xxx.xxx.xxx/mirrors/Win95/
+
+LABEL Windows NT
+        MENU LABEL Windows NT
+        KERNEL images/win/nt
+        APPEND http://xxx.xxx.xxx.xxx/mirrors/NT/
+
+# END

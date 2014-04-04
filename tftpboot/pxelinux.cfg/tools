@@ -1,0 +1,35 @@
+MENU TITLE TOOLS Menu
+MENU BACKGROUND pxelinux.cfg/tools.jpg
+MENU WIDTH 80
+MENU MARGIN 2
+menu color sel		7;37;40    #ff000000 #9923dd23 all
+menu color unsel	37;44      #e000008f #00000000 std
+
+LABEL Main Menu
+        MENU LABEL Main Menu
+        KERNEL bin/vesamenu.c32
+        APPEND pxelinux.cfg/default
+
+MENU SEPARATOR
+
+LABEL MemTest86
+        MENU LABEL Memory Test 86
+        KERNEL bin/memdisk iso
+        APPEND initrd=images/memtest86+-5.01.iso.gz
+
+LABEL Ultimate Boot Disk
+	MENU LABEL Ultimate Boot Disk
+	KERNEL bin/memdisk
+	APPEND iso initrd=images/ubcd529.iso.gz
+
+LABEL Grub Floppy Boot
+	MENU LABEL Grub Floppy Boot
+	KERNEL bin/memdisk
+	APPEND initrd=images/floppy-grub.imz
+
+LABEL DOS Boot
+	MENU LABEL DOS Boot
+	KERNEL bin/memdisk
+	APPEND initrd=images/floppy-dos.imz
+
+# END
