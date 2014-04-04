@@ -232,7 +232,7 @@ group {
 		option routers ${NIC_RTR};
 		option domain-name-servers ${NIC_RTR};
 		option subnet-mask ${NIC_MASK};
-		option domain-name "ancientwizard.dyndns.org";
+		option domain-name "YOUR.DNS.DOMAIN.org";
 		option time-offset -5;
 		option ntp-servers ${NIC_RTR};
 		option netbios-name-servers ${NIC_RTR};
