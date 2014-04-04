@@ -259,5 +259,9 @@ else
   service dhcpd restart
 fi
 
+echo ''
+echo ' You will want to inspect the dhcpd.conf file and customize it.'
+echo '  Also look at the tftpboot directory!'
+echo ''
 
 # END
