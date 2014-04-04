@@ -1,0 +1,9 @@
+
+ This example demonstrates the automatic setup of several services needed to enable
+ PXE booting on the local subnet. It includes example menus. While you can navigate
+ the menus none of them will do anything unless you provide the missing images.
+
+  Example: Placing a bootable DOS floppy image in the proper location as
+           defined in the menu will boot the system/VM to a DOS prompt.
+           Some ISO images may be booted in the same way.
+
