@@ -14,7 +14,7 @@
 
 ##
 ##  NOTES: This script was written for and tested on a VM installed
-##         with a default CentOS 6.5; it should work equally well on
+##         with a default CentOS 6.4; it should work equally well on
 ##         physical hardware running the same release. I fully
 ##         expect it will run on Red-Hat as well as earlier versions.
 ##
@@ -178,19 +178,51 @@ then
   #-- Prefare the /var/lib/tftpboot/ dir for usage
   ##   (populate it!)
   (
-    TFTPBOOTSRC=$(dirname $0)/../tftpboot
     TFTPBOOTTGT=/var/lib/tftpboot
-
-    [ -d $TFTPBOOTSRC ] || { echo 'Failed to find menus'; exit 1; }
     [ -d $TFTPBOOTTGT ] || { echo 'Failed to find tftpboot dir'; exit 1; }
 
-    cd $TFTPBOOTSRC || exit 1
+    cd $TFTPBOOTTGT || exit 1
+
     echo -n "  populating tftpboot PXE menus  : "
-    find . -depth -print | cpio -pudm $TFTPBOOTTGT > /tmp/populate-tftpboot.log 2>&1
+
+    (
+      cat <<EOF!
+help/version.txt
+help/help.txt
+pxelinux.cfg/default
+pxelinux.cfg/open-suse
+pxelinux.cfg/open-suse.jpg
+pxelinux.cfg/red-hat
+pxelinux.cfg/red-hat.jpg
+pxelinux.cfg/ubuntu
+pxelinux.cfg/cent-os.jpg
+pxelinux.cfg/windows.jpg
+pxelinux.cfg/tools.jpg
+pxelinux.cfg/cent-os
+pxelinux.cfg/windows
+pxelinux.cfg/tools
+pxelinux.cfg/default.jpg
+pxelinux.cfg/ubuntu.jpg
+images/floppy-dos.imz
+images/memtest86+-5.01.iso.gz
+images/floppy-grub.imz
+EOF!
+    ) | \
+    while read item
+    do
+      DIR=$( dirname $item )
+      [ -d $DIR ] || mkdir -p $DIR
+      (
+        cd $DIR || exit 1
+        wget https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item}
+      )
+    done > /tmp/populate-tftpboot.log 2>&1
+
     [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
     echo "$ST [ check: /tmp/populate-tftpboot.log ]"
 
-    cd /var/lib/tftpboot || exit 1
+
+    cd $TFTPBOOTTGT || exit 1
     ST='OK  '
     echo -n "  Populating tftpboot binaries   : "
     (
@@ -320,9 +352,23 @@ else
   service dhcpd restart
 fi
 
+if [ -f /etc/centos-release -o -f /etc/redhat-release ]
+then
+  ST=OK
+
+  echo -n "  Starting DHCP server           : "
+  /sbin/chkconfig dhcpd on >> /tmp/dhcpd-install.log 2>&1
+  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
+  echo "$ST [ check: /tmp/dhcpd-install.log ]"
+  /sbin/service dhcpd restart
+fi
+
 echo ''
-echo ' You will want to inspect the dhcpd.conf file and customize it.'
-echo '  Also look at the tftpboot directory!'
+echo ' TODO:'
+echo '  1) Inspect the dhcpd.conf file and change as needed to'
+echo '     meet the needs of your local network such as MAC addresses'
+echo '  2) Inspect the tftpboot directory!'
+echo '  3) PXE boot a system and enjoy the results.'
 echo ''
 
 # END
