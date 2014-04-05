@@ -1,12 +1,23 @@
 
- This example demonstrates the automatic setup of several services needed to enable
- PXE booting on the local subnet. It includes example menus. While you can navigate
- the menus none of them will do anything unless you provide the missing images.
+ This example demonstrates the automatic setup of several services needed to
+ enable PXE booting on the local subnet. It includes example menus. While you
+ can navigate the menus most of them will do nothing unless you provide the
+ missing images.
 
-  Example: Placing a bootable DOS floppy image in the proper location as
-           defined in the menu will boot the system/VM to a DOS prompt.
-           Some ISO images may be booted in the same way. I plan to create
-           future projects(s) that will bring some of the menus to life
-           illustrating OS installs, manual and automated, such as kickstart,
-           autoyast and preseeding.
+ Example: I have included bootable floppy images in the proper location as
+          defined in the menu that boot the system/VM to a prompt (DOS.Grub).
+          Some ISO images may be booted in the same way. I plan to create
+          future projects(s) that will bring some of the menus to life
+          illustrating OS installs, manual and automated, such as kickstart,
+          autoyast and preseeding.
+
+ How to get started:
+ 1) build a bare linux system (CenOS/RedHat) - others soon to follow
+ 2) pull the script
+    # wget https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/bin/pxe-setup
+ 3) and run it
+    # chmod 0755 pxe-setup; ./pxe-setup
+    -- snip --
+ 4) PXE boot another system whos MAC is defined in the dhcpd.conf file
+    and the magic should happen.
 
