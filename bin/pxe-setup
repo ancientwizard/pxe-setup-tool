@@ -27,9 +27,10 @@
 ##
 ##  ASSUMPTIONS:
 ##   1) The system we will demo PXE on is networked (kind of the point)
-##   2) has standard DHCP services from a local router [ home OR office etc ]
+##   2) The PXE system has internet access to allow package installaton
+##   3) has standard DHCP services from a local router [ home OR office etc ]
 ##      ( we don't need fixed IP's for this)
-##   3) other system(s) with PXE client enabled NIC's are available
+##   4) other system(s) with PXE client enabled NIC's are available
 ##      (we need the server and at least one client)
 ##
 
@@ -65,7 +66,22 @@ isNicIPed()
 
 hasNicConfig()
 {
-  [ -d /etc/sysconfig/network-scripts/ -a -e /etc/sysconfig/network-scripts/ifcfg-$1 ]
+  if [ -f /etc/centos-release -o -f /etc/redhat-release ]
+  then
+    [ -d /etc/sysconfig/network-scripts/ -a -e /etc/sysconfig/network-scripts/ifcfg-$1 ]
+    return $?
+  fi
+
+  if [ -f /etc/lsb-release -a -f /etc/network/interfaces ]
+  then
+    #-- YUCK! - not reliable
+    # grep -q "$NIC" /etc/network/interfaces
+
+    #-- config may be "unseen" OR "subtle"
+    #-- (bad: assume if it's up life is good)
+    isNicUP $1 && isNicIPed $1 && return $?
+  fi
+
   return $?
 }
 
@@ -96,12 +112,67 @@ TurnUpNIC()
   isNicEnabled $NIC || enableNic $NIC
   isNicUP      $NIC && isNicIPed $nic && \
   {
-    echo "  Neworking Status $NIC          : OK"
+    showMessage "Networking Status $NIC"
+    showStatus $?
     return $?
   }
 
   ifup $NIC
 }
+
+showMessage() { printf "  %-32s : " "$1"; }
+showStatus()
+{
+  STA=$1 # Status
+  NOT=$2 # Note
+
+# printf "  %-32s : " "$MSG"
+  [ $STA -eq 0 ] && ST=OK || ST=FAIL
+  [ '' == "$NOT" ] && echo $ST
+  [ '' == "$NOT" ] || printf "%-4s [ %s ]\n" $ST "$NOT"
+
+  return $STA
+}
+
+processAction()
+{
+  MSG=$1
+  CMD=$2
+  LOG=$3
+
+  STATUS=0
+  
+  showMessage "$MSG"
+  $CMD >> ${LOG}.$$ 2>&1
+  STATUS=$?
+  showStatus $STATUS "check: ${LOG}.$$"
+
+  return $STATUS
+}
+
+
+##
+## Announce our title & locate a package installer
+##
+
+echo
+echo '  PXE Environment Setup Tool'
+echo '   ( an automation demonstration script )'
+echo
+
+showMessage 'Pruned Logs from Prior runs'
+/bin/rm -f /tmp/pxe-*.log.[0-9]*
+showStatus 0 || exit $?
+
+INSTALLER=
+
+[ -x /usr/bin/yum     ] && INSTALLER='/usr/bin/yum     --assumeyes  install'
+[ -x /usr/bin/apt-get ] && INSTALLER='/usr/bin/apt-get --assume-yes install'
+
+[ '' == "$INSTALLER" ] && iFound=1 || iFound=0
+
+showMessage 'Locate package installer'
+showStatus $iFound "$INSTALLER" || exit $?
 
 
 ##
@@ -118,6 +189,7 @@ TurnUpNIC()
 ##      little else we can do!
 ##
 
+
 #-- First NIC UP wins!
 for NIC in eth0 eth1 eth2 eth3
 do
@@ -129,35 +201,97 @@ done
 ##   3) Install the xinetd and tftpd services and get them up and running
 ##
 
+#-- Install tftpd and dependencies
+# RH/CentOS == tftp-server
+# Ubuntu    == tftpd
+msg='Installing TFTPD & XINETD Svcs'
+pkg='tftpd'
+[ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg='tftp-server'
+log=/tmp/pxe-tftpd-server-install.log
+
+# processAction "$msg" "$INSTALLER $pkg" $log || exit $?
+
+
+#-- Provide a /etc/xinetd.d/tftp
+##  (if not included in package YUCK!)
+if [ -d /etc/xinetd.d -a ! -f /etc/xinetd.d/tftp ]
+then
+  showMessage 'Install /etc/xinetd.d/tftp'
+  cat > /etc/xinetd.d/tftp <<!TFTP
+# Installed by $0
+service tftp
+{
+	protocol        = udp
+	port            = 69
+	socket_type     = dgram
+	wait            = yes
+	user            = nobody
+	server          = /usr/sbin/in.tftpd
+	server_args     = -s /var/lib/tftpboot
+	disable         = no
+}
+
+# END
+!TFTP
+
+  [ -f /etc/xinetd.d/tftp ] && chmod 0644 /etc/xinetd.d/tftp
+
+  showStatus $? || exit $?
+else
+  showMessage 'Install /etc/xinetd.d/tftp'
+  showStatus 0 'Preexists' || exit $?
+fi
+
+
+#-- Build empty /var/lib/tftpboot
+##  (if not included in package YUCK!)
+if [ -d /var/lib/tftpboot ]
+then
+  showMessage 'Create /var/lib/tftpboot'
+  showStatus 0 'Preexists' || exit $?
+else
+  CMD=/tmp/pxe-create-tftpboot-dir.bash
+  LOG=/tmp/pxe-create-tftpboot-dir.log
+  cat > $CMD <<!MKDIR
+#!/bin/bash
+    mkdir -p     /var/lib/tftpboot
+    chmod 0755   /var/lib/tftpboot
+    chown nobody /var/lib/tftpboot
+!MKDIR
+  chmod 0755 $CMD
+  processAction 'Create /var/lib/tftpboot' $CMD $LOG || exit $?
+fi
+
+#-- Enable tftpd
+msg='Enabling TFTPD'
+log=/tmp/pxe-tftpd-server-enable.log
+
+if [ -x /sbin/chkconfig ]
+then
+  processAction "$msg" "/sbin/chkconfig tftp" $log || exit $?
+else
+  showMessage "$msg"
+  showStatus 0 'Assumed' || exit $?
+fi
+
+#-- Restart xinetd
+processAction "Start/Restart XINTD" "service xinetd restart" /tmp/pxe-xinetd-service.log || exit $?
+
+
+#-- Configure firewall (CentOS & RH)
 if [ -f /etc/centos-release -o -f /etc/redhat-release ]
 then
-  ST=OK
-
-  echo -n "  Installing TFTPD & XINETD Svcs : "
-  /usr/bin/yum --assumeyes install tftp-server > /tmp/tftpd-server-install.log 2>&1
-  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
-  echo "$ST [ check: /tmp/tftpd-server-install.log ]"
-
-  echo -n "  Enabling TFTPD                 : "
-  /sbin/chkconfig tftp on  > /tmp/tftpd-server-enable.log 2>&1
-  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
-  echo "$ST [ check: /tmp/tftpd-server-enable.log ]"
-
-  echo -n "  Start/Restart XINTD            : "
-  /sbin/service xinetd restart > /tmp/xinetd-service.log 2>&1
-  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
-  echo "$ST [ check: /tmp/xinetd-service.log ]"
-
-  echo -n "  Add iptables rule for tftpd    : "
+  msg='Add iptables rule for tftpd'
+  showMessage "$msg"
   /sbin/iptables --list --line-numbers | grep -q tftp || \
-  /sbin/iptables --insert INPUT 5 -m state --state NEW --proto udp --dport 69 -j ACCEPT > /tmp/iptables.log 2>&1
-  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
-  echo "$ST [ check: /tmp/iptables.log ]"
+  /sbin/iptables --insert INPUT 5 -m state --state NEW --proto udp --dport 69 -j ACCEPT > \
+      /tmp/pxe-iptables.log.$$ 2>&1
+  showStatus 0 "check: /tmp/pxe-iptables.log.$$" || exit $?
 
-  echo -n "  Save iptabels rules            : "
-  /sbin/iptables-save > /etc/sysconfig/iptables 2>> /tmp/iptables.log
-  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
-  echo "$ST [ check: /tmp/iptables.log ]"
+  msg='Save iptabels rules'
+  showMessage "$msg"
+  /sbin/iptables-save > /etc/sysconfig/iptables 2>> /tmp/iptables.log.$$
+  showStatus 0 "check: /tmp/pxe-iptables.log.$$" || exit $?
 fi
 
 
@@ -166,27 +300,28 @@ fi
 ##      And populate tftpboot with these binaries and our example menus
 ##
 
-if [ -f /etc/centos-release -o -f /etc/redhat-release ]
-then
-  ST=OK
+#-- Install syslinux and dependencies
+# RH/CentOS == syslinux
+# Ubuntu    == syslinux
+msg='Installing SYSLINUX software'
+pkg='syslinux'
+log=/tmp/pxe-syslinux-install.log
 
-  echo -n "  Installing SYSLINUX software   : "
-  /usr/bin/yum --assumeyes install syslinux    > /tmp/syslinux-install.log 2>&1
-  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
-  echo "$ST [ check: /tmp/syslinux-install.log ]"
+processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 
-  #-- Prefare the /var/lib/tftpboot/ dir for usage
-  ##   (populate it!)
+
+#-- Prepare the /var/lib/tftpboot/ dir for usage
+##   (populate it!)
+ST=OK
+(
+  TFTPBOOTTGT=/var/lib/tftpboot
+  [ -d $TFTPBOOTTGT ] || { echo 'Failed to find tftpboot dir'; exit 1; }
+
+  cd $TFTPBOOTTGT || exit 1
+
+  showMessage 'Populating tftpboot PXE menus'
   (
-    TFTPBOOTTGT=/var/lib/tftpboot
-    [ -d $TFTPBOOTTGT ] || { echo 'Failed to find tftpboot dir'; exit 1; }
-
-    cd $TFTPBOOTTGT || exit 1
-
-    echo -n "  populating tftpboot PXE menus  : "
-
-    (
-      cat <<EOF!
+    cat <<!EOF
 help/version.txt
 help/help.txt
 pxelinux.cfg/default
@@ -206,46 +341,59 @@ pxelinux.cfg/ubuntu.jpg
 images/floppy-dos.imz
 images/memtest86+-5.01.iso.gz
 images/floppy-grub.imz
-EOF!
-    ) | \
-    while read item
-    do
-      DIR=$( dirname $item )
-      [ -d $DIR ] || mkdir -p $DIR
-      (
-        cd $DIR || exit 1
-        wget https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item}
-      )
-    done > /tmp/populate-tftpboot.log 2>&1
-
-    [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
-    echo "$ST [ check: /tmp/populate-tftpboot.log ]"
-
-
-    cd $TFTPBOOTTGT || exit 1
-    ST='OK  '
-    echo -n "  Populating tftpboot binaries   : "
+!EOF
+  ) | \
+  while read item
+  do
+    DIR=$( dirname $item )
+    FIL=$( basename $item )
+    [ -d $DIR ] || mkdir -p $DIR
     (
-      [ -f pxelinux.0   ] || { ln /usr/share/syslinux/pxelinux.0   || ST=FAIL; }
-      [ -d bin ] || mkdir bin
-      cd bin || ST=FAIL
-      [ -f menu.c32     ] || { ln /usr/share/syslinux/menu.c32     || ST=FAIL; }
-      [ -f vesamenu.c32 ] || { ln /usr/share/syslinux/vesamenu.c32 || ST=FAIL; }
-      [ -f memdisk      ] || { ln /usr/share/syslinux/memdisk      || ST=FAIL; }
-    ) >> /tmp/populate-tftpboot.log 2>&1
-    echo "$ST [ check: /tmp/populate-tftpboot.log ]"
-  )
-fi
+      cd $DIR || exit 1
+      [ -f $FIL ] || \
+      wget https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item}
+    )
+  done > /tmp/pxe-populate-tftpboot.log.$$ 2>&1
+
+  showStatus $? "check: /tmp/pxe-populate-tftpboot.log.$$" || exit $?
+
+
+  cd $TFTPBOOTTGT || exit 1
+  ST='OK  '
+  showMessage 'Populating tftpboot binaries'
+  (
+    [ -f pxelinux.0   ] || { ln $( echo /usr/*/syslinux/pxelinux.0   ) || ST=FAIL; }
+    [ -d bin ] || mkdir bin
+    cd bin || ST=FAIL
+    [ -f menu.c32     ] || { ln $( echo /usr/*/syslinux/menu.c32     ) || ST=FAIL; }
+    [ -f vesamenu.c32 ] || { ln $( echo /usr/*/syslinux/vesamenu.c32 ) || ST=FAIL; }
+    [ -f memdisk      ] || { ln $( echo /usr/*/syslinux/memdisk      ) || ST=FAIL; }
+  ) >> /tmp/pxe-populate-tftpboot.log.$$ 2>&1
+  echo "$ST [ check: /tmp/pxe-populate-tftpboot.log.$$ ]"
+)
 
 
 ##
-##   6) Install and turn up the DHCP service
+##   6) Install, configure and start the DHCP service
 ##      We need this to tell the PXE booting system what to do
 ##      (I.E. here is you IP sir, go and get this file ... )
 ##
 ##   BUGS: I assume the subnet is at least a class "C" in size!
 ##         (anything smaller and the computed range may be wrong)
 ##
+
+# VICB
+#-- Install dhcpd and dependencies
+# RH/CentOS == dhcp
+# Ubuntu    == udhcpd
+msg='Installing DHCPD server'
+pkg='udhcpd'
+[ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg='dhcp'
+#echo we continue
+
+
+#exit 0
+
 
 if [ -f /etc/centos-release -o -f /etc/redhat-release ]
 then
@@ -257,7 +405,7 @@ then
   echo "$ST [ check: /tmp/dhcpd-install.log ]"
 
 # iptables --verbose --insert INPUT 5 -m state --state NEW --proto udp --dport 67 -j ACCEPT
-#  (i did not have to do this for DHCP, initial packets are bcast and make it through,
+#  (i did not have to do this for DHCP, initial packets are bcast/discovery and make it through;
 #   my best guess)
 fi
 
