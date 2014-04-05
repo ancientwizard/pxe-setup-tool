@@ -2,36 +2,42 @@
 
 ##
 ##  Introduction:
-##    My prefered SHELL is ksh, as we have had a long and illustrious
+##    My preferred SHELL is ksh, as we have had a long and illustrious
 ##    career together; however I have used BASH here to keep things
-##    simpler for this example project.
+##    simpler for this automation "demonstration" project.
 ##
 ##     I.E. show my scripting skills using a shell that should be
-##          on any linux system in existance by default.
+##          on any Linux system in existence by default.
 ##
-##    If I were writting an applicaton I would use Perl OR Java.
+##    If I were writing an application I would use Perl OR Java.
+##    This however is an OS service setup automation and BASH
+##      will suit us well.
 ##
 
 ##
-##  NOTES: This script was written for and tested on a VM installed
-##         with a default CentOS 6.4; it should work equally well on
-##         physical hardware running the same release. I fully
-##         expect it will run on Red-Hat as well as earlier versions.
+##  TESTED ON:
+##     CentOS 6.4 minimal server; expected to work on 3.x - 6.x
+##            including RedHat
+##     Ubuntu 12.04 desktop/server; fully expect it to work on
+##            the 10.04 or earlier releases.
 ##
-##          I.E. It should work on 4.x-6.x
-##
+##  NOTES:
 ##         This script is not comprehensive or production ready. It
-##         makes too many assumptions and provide not options or
-##         flexibility for alternatives. It simply shows one simple way
-##         to build a PXE boot server.
+##         makes too many assumptions and provides no options or
+##         flexibility for alternative solutions. It simply shows
+##         one simple way to build a PXE boot server.
 ##
 ##  ASSUMPTIONS:
-##   1) The system we will demo PXE on is networked (kind of the point)
-##   2) The PXE system has internet access to allow package installaton
-##   3) has standard DHCP services from a local router [ home OR office etc ]
-##      ( we don't need fixed IP's for this)
-##   4) other system(s) with PXE client enabled NIC's are available
-##      (we need the server and at least one client)
+##   1) The system to be PXE enabled is networked (kind of the point)
+##   2) The system this script is run on is not doing something importent
+##       (we will break any exising dhcp & tftp servers on the system,
+##        the script assumes it has control)
+##   3) The PXE system has Internet access to allow package installation
+##   4) has standard DHCP services from a local router
+##      [ home OR office etc ] ( we don't need fixed IP's for this,
+##        and we only want to handle PXE DHCP requests if we can )
+##   5) Other system(s)/VM(s) with PXE client enabled NIC's are available
+##      (we need the server and at least one client to demo)
 ##
 
 ## Define few Functions
@@ -78,7 +84,7 @@ hasNicConfig()
     # grep -q "$NIC" /etc/network/interfaces
 
     #-- config may be "unseen" OR "subtle"
-    #-- (bad: assume if it's up life is good)
+    #-- (bad: assume, if it's up life is good)
     isNicUP $1 && isNicIPed $1 && return $?
   fi
 
@@ -126,7 +132,6 @@ showStatus()
   STA=$1 # Status
   NOT=$2 # Note
 
-# printf "  %-32s : " "$MSG"
   [ $STA -eq 0 ] && ST=OK || ST=FAIL
   [ '' == "$NOT" ] && echo $ST
   [ '' == "$NOT" ] || printf "%-4s [ %s ]\n" $ST "$NOT"
@@ -209,7 +214,7 @@ pkg='tftpd'
 [ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg='tftp-server'
 log=/tmp/pxe-tftpd-server-install.log
 
-# processAction "$msg" "$INSTALLER $pkg" $log || exit $?
+processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 
 
 #-- Provide a /etc/xinetd.d/tftp
@@ -296,7 +301,7 @@ fi
 
 
 ##
-##   4) Install syslinux; it includes the binares to build PXE boot-chains
+##   4) Install syslinux; it includes the binaries to build PXE boot-chains
 ##      And populate tftpboot with these binaries and our example menus
 ##
 
@@ -312,7 +317,7 @@ processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 
 #-- Prepare the /var/lib/tftpboot/ dir for usage
 ##   (populate it!)
-ST=OK
+
 (
   TFTPBOOTTGT=/var/lib/tftpboot
   [ -d $TFTPBOOTTGT ] || { echo 'Failed to find tftpboot dir'; exit 1; }
@@ -359,17 +364,17 @@ images/floppy-grub.imz
 
 
   cd $TFTPBOOTTGT || exit 1
-  ST='OK  '
+  ST=0
   showMessage 'Populating tftpboot binaries'
   (
-    [ -f pxelinux.0   ] || { ln $( echo /usr/*/syslinux/pxelinux.0   ) || ST=FAIL; }
+    [ -f pxelinux.0   ] || { ln $( echo /usr/*/syslinux/pxelinux.0   ) || ST=1; }
     [ -d bin ] || mkdir bin
-    cd bin || ST=FAIL
-    [ -f menu.c32     ] || { ln $( echo /usr/*/syslinux/menu.c32     ) || ST=FAIL; }
-    [ -f vesamenu.c32 ] || { ln $( echo /usr/*/syslinux/vesamenu.c32 ) || ST=FAIL; }
-    [ -f memdisk      ] || { ln $( echo /usr/*/syslinux/memdisk      ) || ST=FAIL; }
+    cd bin || ST=1
+    [ -f menu.c32     ] || { ln $( echo /usr/*/syslinux/menu.c32     ) || ST=1; }
+    [ -f vesamenu.c32 ] || { ln $( echo /usr/*/syslinux/vesamenu.c32 ) || ST=1; }
+    [ -f memdisk      ] || { ln $( echo /usr/*/syslinux/memdisk      ) || ST=1; }
   ) >> /tmp/pxe-populate-tftpboot.log.$$ 2>&1
-  echo "$ST [ check: /tmp/pxe-populate-tftpboot.log.$$ ]"
+  showStatus $ST  "check: /tmp/pxe-populate-tftpboot.log.$$"
 )
 
 
@@ -382,38 +387,26 @@ images/floppy-grub.imz
 ##         (anything smaller and the computed range may be wrong)
 ##
 
-# VICB
 #-- Install dhcpd and dependencies
 # RH/CentOS == dhcp
-# Ubuntu    == udhcpd
+# Ubuntu    == dhcp3-server
 msg='Installing DHCPD server'
-pkg='udhcpd'
+pkg='dhcp3-server'
+log=/tmp/pxe-tftpd-server-install.log
+
 [ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg='dhcp'
-#echo we continue
 
-
-#exit 0
-
-
-if [ -f /etc/centos-release -o -f /etc/redhat-release ]
-then
-  ST=OK
-
-  echo -n "  Installing DHCP server         : "
-  /usr/bin/yum --assumeyes install dhcp    > /tmp/dhcpd-install.log 2>&1
-  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
-  echo "$ST [ check: /tmp/dhcpd-install.log ]"
+processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 
 # iptables --verbose --insert INPUT 5 -m state --state NEW --proto udp --dport 67 -j ACCEPT
 #  (i did not have to do this for DHCP, initial packets are bcast/discovery and make it through;
 #   my best guess)
-fi
 
 
 #-- Compute Network values from the "UP" NIC
 ##   use them to build a simple dhcpd.conf file.
 
-echo -n "  Building dhcpd.conf file       : "
+showMessage 'Building dhcpd.conf file'
 
 NIC_ADDR=$(getNicIP   $NIC)
 NIC_MASK=$(getNicMask $NIC)
@@ -437,11 +430,7 @@ NIC_RNG="${BCST[0]}.${BCST[1]}.${BCST[2]}.240"
 
 NIC_RTR=$( netstat -rn|grep $NIC|grep '^0.0.0.0'|awk '{print $2}' )
 
-# echo "  Using $NIC for DHCP setup: $NIC_ADDR $NIC_MASK $NIC_NET"
-# echo "     Starting at: $NIC_NST"
-# echo "      Ends    at: $NIC_NED"
-
-cat > /tmp/dhcpd.conf <<EOF!
+cat > /tmp/dhcpd.conf <<!EOF
 #
 # DHCP Server Configuration file.
 #   see /usr/share/doc/dhcp*/dhcpd.conf.sample
@@ -481,35 +470,46 @@ group {
 }
 
 # END
-EOF!
+!EOF
 
 if diff /tmp/dhcpd.conf /etc/dhcp/dhcpd.conf > /dev/null 2>&1
 then
-  echo 'OK   [ check: /tmp/dhcpd.conf ] - no change so not installed'
+  showStatus 0 'check: /tmp/dhcpd.conf - no change, not installed'
 else
-  if [ $( wc -l /etc/dhcp/dhcpd.conf | awk '{print $1}' ) -gt 10 ]
+  if [ $( grep -v '^#' /etc/dhcp/dhcpd.conf | grep -v '^$' | awk '{print $1}' | wc -l ) -gt 10 ]
   then
-    echo 'OK   [ check: /tmp/dhcpd.conf ] - existing config not overwritten'
+    showStatus 0 'check: /tmp/dhcpd.conf - existing config not overwritten'
     echo "                                 :     ( install manually as needed ) "
   else
     [ -f /tmp/dhcpd.conf ] && cat /tmp/dhcpd.conf > /etc/dhcp/dhcpd.conf && \
     /bin/rm -f /tmp/dhcpd.conf
-    [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
-    echo "$ST [ check: /tmp/dhcpd.conf ]"
+    showStatus $? 'check: /etc/dhcp/dhcpd.conf and /tmp/dhcpd.conf'
   fi
-  service dhcpd restart
 fi
 
-if [ -f /etc/centos-release -o -f /etc/redhat-release ]
+#-- Enable DHCPD
+msg='Enabling DHCP server'
+log=/tmp/dhcpd-install.log
+
+if [ -x /sbin/chkconfig ]
 then
-  ST=OK
-
-  echo -n "  Starting DHCP server           : "
-  /sbin/chkconfig dhcpd on >> /tmp/dhcpd-install.log 2>&1
-  [ $? -eq 0 ] && ST='OK  ' || ST=FAIL
-  echo "$ST [ check: /tmp/dhcpd-install.log ]"
-  /sbin/service dhcpd restart
+  processAction "$msg" '/sbin/chkconfig dhcpd on' $log || exit $?
+else
+  showMessage "$msg"
+  showStatus 0 'Assumed' || exit $?
 fi
+
+
+#-- Start/Restart DHCP server
+
+msg='Start/Restart DHCP Server'
+pkg=isc-dhcp-server
+log=/tmp/pxe-xinetd-service.log
+
+[ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg=dhcpd
+
+processAction "$msg" "service $pkg restart" $log || exit $?
+
 
 echo ''
 echo ' TODO:'
