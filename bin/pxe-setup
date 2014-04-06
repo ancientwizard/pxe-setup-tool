@@ -22,6 +22,7 @@
 ##            the 10.04 or earlier releases.
 ##     Debian 7 minimal server; wget https broken, added curl
 ##            as fallback on wget fail.
+##     OpenSUSE 13.1; expected to work with 11.X and above
 ##
 ##  NOTES:
 ##         This script is not comprehensive or production ready. It
@@ -96,7 +97,11 @@ hasNicConfig()
 isNicEnabled()
 {
   [ -d /etc/sysconfig/network-scripts/ -a -e /etc/sysconfig/network-scripts/ifcfg-$1 ] && \
-  grep -i '^ONBOOT=yes' /etc/sysconfig/network-scripts/ifcfg-$1 > /dev/null 2>&1
+  grep -i '^ONBOOT=yes' /etc/sysconfig/network-scripts/ifcfg-$1 > /dev/null 2>&1 && return $?
+
+  [ -d /etc/sysconfig/network/ -a /etc/sysconfig/network/ifcfg-$1 ] && \
+  grep -i "^STARTMODE='auto'" /etc/sysconfig/network/ifcfg-$1 > /dev/null 2>&1 && return $?
+
   return $?
 }
 
@@ -109,6 +114,8 @@ enableNic()
     cat /tmp/ifcfg-$1 > /etc/sysconfig/network-scripts/ifcfg-$1
     rm -f /tmp/ifcfg-$1
   }
+
+  return $?
 }
 
 TurnUpNIC()
@@ -116,16 +123,18 @@ TurnUpNIC()
   #-- Selected NIC
   NIC=${1-eth0}
 
+# printf "[ %s ]" $NIC
+
   hasNicConfig $NIC || return $?
   isNicEnabled $NIC || enableNic $NIC
-  isNicUP      $NIC && isNicIPed $nic && \
+  isNicUP      $NIC && isNicIPed $NIC && \
   {
     showMessage "Networking Status $NIC"
     showStatus $?
     return $?
   }
 
-  ifup $NIC
+  ifup $NIC > /dev/null 2>&1
 }
 
 showMessage() { printf "  %-32s : " "$1"; }
@@ -134,7 +143,8 @@ showStatus()
   STA=$1 # Status
   NOT=$2 # Note
 
-  [ $STA -eq 0 ] && ST=OK || ST=FAIL
+  [ $STA -eq  0 ] && ST=OK || ST=FAIL
+  [ $STA -eq -1 ] && { ST=WARN; STA=1; }
   [ '' == "$NOT" ] && echo $ST
   [ '' == "$NOT" ] || printf "%-4s [ %s ]\n" $ST "$NOT"
 
@@ -175,6 +185,7 @@ INSTALLER=
 
 [ -x /usr/bin/yum     ] && INSTALLER='/usr/bin/yum     --assumeyes  install'
 [ -x /usr/bin/apt-get ] && INSTALLER='/usr/bin/apt-get --assume-yes install'
+[ -x /usr/bin/zypper  ] && INSTALLER='/usr/bin/zypper  --non-interactive install'
 
 [ '' == "$INSTALLER" ] && iFound=1 || iFound=0
 
@@ -198,7 +209,12 @@ showStatus $iFound "$INSTALLER" || exit $?
 
 
 #-- First NIC UP wins!
-for NIC in eth0 eth1 eth2 eth3
+
+NICX='eth0 eth1 eth2 eth3'
+NICS=$( cd /proc/sys/net/ipv4/conf; ls -d * | egrep -v 'all|default|lo' )
+[ '' == "$NICS" ] && NICS="$NICX"
+
+for NIC in ${NICS}
 do
   TurnUpNIC $NIC && break
 done
@@ -214,7 +230,8 @@ done
 msg='Installing TFTPD & XINETD Svcs'
 pkg='tftpd'
 [ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg='tftp-server'
-log=/tmp/pxe-tftpd-server-install.log
+[ -f /etc/SuSE-release                             ] && pkg='tftp yast2-tftp-server'
+log=/tmp/pxe-tftpd-service.log
 
 processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 
@@ -264,6 +281,7 @@ else
     mkdir -p     /var/lib/tftpboot
     chmod 0755   /var/lib/tftpboot
     chown nobody /var/lib/tftpboot
+    [ -x /sbin/yast2 ] && chown tftp:tftp /var/lib/tftpboot
 !MKDIR
   chmod 0755 $CMD
   processAction 'Create /var/lib/tftpboot' $CMD $LOG || exit $?
@@ -271,6 +289,11 @@ fi
 
 
 #-- Symlink /srv/tftpboot (where needed)
+if [ -d /srv/tftpboot -a ! -h /srv/tftpboot ]
+then
+  rmdir /srv/tftpboot > /dev/null 2>&1
+fi
+
 if [ -d /srv -a -d /var/lib/tftpboot -a ! -e /srv/tftpboot ]
 then
   log=/tmp/pxe-symlink-tftpboot.log
@@ -280,10 +303,15 @@ fi
 
 #-- Enable tftpd
 msg='Enabling TFTPD'
-log=/tmp/pxe-tftpd-server-enable.log
+log=/tmp/pxe-tftpd-service.log
 
-if [ -x /sbin/chkconfig ]
+if [ -x /sbin/yast2 ]
 then
+  processAction "$msg (enab)" '/sbin/yast2 tftp-server status enable' $log || exit $?
+  processAction "$msg (show)" '/sbin/yast2 tftp-server status show' $log || exit $?
+  processAction "$msg (path)" '/sbin/yast2 tftp-server directory path=/var/lib/tftpboot' $log || exit $?
+  processAction "$msg (list)" '/sbin/yast2 tftp-server directory list' $log || exit $?
+elif [ -x /sbin/chkconfig ]; then
   processAction "$msg" "/sbin/chkconfig tftp" $log || exit $?
 else
   showMessage "$msg"
@@ -295,8 +323,10 @@ fi
 # default   == xinetd
 # Debian    == openbsd-inetd
 pkg=xinetd
+log=/tmp/pxe-inetd-service.log
 [ -f /etc/os-release -a $( grep -ic debian /etc/os-release ) -gt 0 ] && pkg='openbsd-inetd'
-processAction "Start/Restart XINTD" "service $pkg restart" /tmp/pxe-inetd-service.log || exit $?
+processAction 'Start/Restart XINTD'          "service $pkg restart" $log || exit $?
+processAction 'Start/Restart XINTD (status)' "service $pkg status"  $log || exit $?
 
 
 #-- Configure firewall (CentOS & RH)
@@ -343,25 +373,25 @@ processAction "$msg" "$INSTALLER $pkg" $log || exit $?
   showMessage 'Populating tftpboot PXE menus'
   (
     cat <<!EOF
-help/version.txt
 help/help.txt
+help/version.txt
 pxelinux.cfg/default
+pxelinux.cfg/default.jpg
+pxelinux.cfg/cent-os
+pxelinux.cfg/cent-os.jpg
 pxelinux.cfg/open-suse
 pxelinux.cfg/open-suse.jpg
 pxelinux.cfg/red-hat
 pxelinux.cfg/red-hat.jpg
-pxelinux.cfg/ubuntu
-pxelinux.cfg/cent-os.jpg
-pxelinux.cfg/windows.jpg
-pxelinux.cfg/tools.jpg
-pxelinux.cfg/cent-os
-pxelinux.cfg/windows
 pxelinux.cfg/tools
-pxelinux.cfg/default.jpg
+pxelinux.cfg/tools.jpg
+pxelinux.cfg/ubuntu
 pxelinux.cfg/ubuntu.jpg
+pxelinux.cfg/windows
+pxelinux.cfg/windows.jpg
 images/floppy-dos.imz
-images/memtest86+-5.01.iso.gz
 images/floppy-grub.imz
+images/memtest86+-5.01.iso.gz
 !EOF
   ) | \
   while read item
@@ -409,15 +439,16 @@ images/floppy-grub.imz
 # Ubuntu    == dhcp3-server
 msg='Installing DHCPD server'
 pkg='dhcp3-server'
-log=/tmp/pxe-tftpd-server-install.log
+log=/tmp/pxe-dhcpd-service.log
 
 [ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg='dhcp'
+[ -f /etc/os-release -a $( grep -ic opensuse /etc/os-release ) -gt 0 ] && pkg='yast2-dhcp-server dhcp-server'
 
 processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 
 # iptables --verbose --insert INPUT 5 -m state --state NEW --proto udp --dport 67 -j ACCEPT
 #  (i did not have to do this for DHCP, initial packets are bcast/discovery and make it through;
-#   my best guess)
+#   my best guess) - RH/CentOS
 
 
 #-- Compute Network values from the "UP" NIC
@@ -456,60 +487,74 @@ cat > /tmp/dhcpd.conf <<!EOF
 
 allow booting;
 allow bootp;
+
+option domain-name "YOUR.DNS.DOMAIN.org";
+option domain-name-servers ${NIC_RTR};
+option routers ${NIC_RTR};
+option ntp-servers ${NIC_RTR};
+option netbios-name-servers ${NIC_RTR};
+
+default-lease-time 1800;
+
 ddns-update-style interim;
 
 ## GOAL: service PXE BOOTP requests only
 ##   normal router will service everything else
-group {
-	# No fixed IP's here (not needed!)
-	#  (you need to change these to match your systems OR use these)
-	host pxe-client-1 { hardware ethernet 08:00:27:c1:b3:57; }
-	host pxe-client-2 { hardware ethernet 08:00:27:c1:b3:58; }
-	host pxe-client-3 { hardware ethernet 08:00:27:c1:b3:59; }
-	host pxe-client-4 { hardware ethernet 08:00:27:c1:b3:5a; }
 
-	# We'll use IP from this pool
-	subnet ${NIC_NET} netmask ${NIC_MASK} {
-		option vendor-class-identifier "PXEClient";
-		filename "pxelinux.0";
-		next-server ${NIC_ADDR};
-		range ${NIC_RNG} ${NIC_NED};
-		default-lease-time 1800;
-		max-lease-time 4800;
-		option routers ${NIC_RTR};
-		option domain-name-servers ${NIC_RTR};
-		option subnet-mask ${NIC_MASK};
-		option domain-name "YOUR.DNS.DOMAIN.org";
-		option time-offset -5;
-		option ntp-servers ${NIC_RTR};
-		option netbios-name-servers ${NIC_RTR};
-	}
+group {
+  # No fixed IP's here (not needed!)
+  #  (you need to change these to match your systems OR use these)
+  host pxe-client-1 { hardware ethernet 08:00:27:c1:b3:57; }
+  host pxe-client-2 { hardware ethernet 08:00:27:c1:b3:58; }
+  host pxe-client-3 { hardware ethernet 08:00:27:c1:b3:59; }
+  host pxe-client-4 { hardware ethernet 08:00:27:c1:b3:5a; }
+
+  # We'll use IP from this pool
+  subnet ${NIC_NET} netmask ${NIC_MASK} {
+    option vendor-class-identifier "PXEClient";
+    filename "pxelinux.0";
+    next-server ${NIC_ADDR};
+    range ${NIC_RNG} ${NIC_NED};
+    max-lease-time 4800;
+    option routers ${NIC_RTR};
+    option subnet-mask ${NIC_MASK};
+    option time-offset -5;
+  }
 }
 
 # END
 !EOF
 
-if diff /tmp/dhcpd.conf /etc/dhcp/dhcpd.conf > /dev/null 2>&1
+DHCPDCONF=/etc/dhcp/dhcpd.conf
+[ -d /etc/dhcpd/ ] || DHCPDCONF=/etc/dhcpd.conf
+
+if diff /tmp/dhcpd.conf $DHCPDCONF > /dev/null 2>&1
 then
   showStatus 0 'check: /tmp/dhcpd.conf - no change, not installed'
 else
-  if [ $( grep -v '^#' /etc/dhcp/dhcpd.conf | grep -v '^$' | awk '{print $1}' | wc -l ) -gt 10 ]
+  if [ $( grep -v '^#' $DHCPDCONF | grep -v '^$' | awk '{print $1}' | wc -l ) -gt 10 ]
   then
     showStatus 0 'check: /tmp/dhcpd.conf - existing config not overwritten'
-    echo "                                 :     ( install manually as needed ) "
+    showMessage ''
+    echo "      ( install manually as needed )"
   else
-    [ -f /tmp/dhcpd.conf ] && cat /tmp/dhcpd.conf > /etc/dhcp/dhcpd.conf && \
+    [ -f /tmp/dhcpd.conf ] && cat /tmp/dhcpd.conf > $DHCPDCONF && \
     /bin/rm -f /tmp/dhcpd.conf
-    showStatus $? 'check: /etc/dhcp/dhcpd.conf and /tmp/dhcpd.conf'
+    showStatus $? "check: $DHCPDCONF and /tmp/dhcpd.conf"
   fi
 fi
 
+
 #-- Enable DHCPD
 msg='Enabling DHCP server'
-log=/tmp/dhcpd-install.log
+log=/tmp/pxe-dhcpd-service.log
 
-if [ -x /sbin/chkconfig ]
+if [ -x /sbin/yast2 ]
 then
+  processAction "$msg (enab)" '/sbin/yast2 dhcp-server enable' $log || exit $?
+#-- Always fails even though it works - some kind of bug
+# processAction "$msg (stat)" '/sbin/yast2 dhcp-server status' $log || exit $?
+elif [ -x /sbin/chkconfig ]; then
   processAction "$msg" '/sbin/chkconfig dhcpd on' $log || exit $?
 else
   showMessage "$msg"
@@ -521,9 +566,10 @@ fi
 
 msg='Start/Restart DHCP Server'
 pkg=isc-dhcp-server
-log=/tmp/pxe-xinetd-service.log
+log=/tmp/pxe-dhcpd-service.log
 
 [ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg=dhcpd
+[ -f /etc/os-release -a $( grep -ic opensuse /etc/os-release ) -gt 0 ] && pkg='dhcpd'
 
 processAction "$msg" "service $pkg restart" $log || exit $?
 
