@@ -329,9 +329,18 @@ processAction 'Start/Restart XINTD'          "service $pkg restart" $log || exit
 processAction 'Start/Restart XINTD (status)' "service $pkg status"  $log || exit $?
 
 
-#-- Configure firewall (CentOS & RH)
-if [ -f /etc/centos-release -o -f /etc/redhat-release ]
+#-- Configure firewall
+if [ -f /etc/os-release -a $( grep -ic opensuse /etc/os-release ) -gt 0 ]
 then
+  #-- (openSUSE)
+  log=/tmp/pxe-firewall.log
+  for svc in 'service:dhcp-server' 'service:tftp'
+  do
+    processAction "Firewall $svc" "/sbin/yast2 firewall services add service=$svc zone=EXT" $log || exit $?
+  done
+
+elif [ -f /etc/centos-release -o -f /etc/redhat-release ]; then
+  #-- (CentOS & RH)
   msg='Add iptables rule for tftpd'
   showMessage "$msg"
   /sbin/iptables --list --line-numbers | grep -q tftp || \
@@ -551,8 +560,10 @@ log=/tmp/pxe-dhcpd-service.log
 
 if [ -x /sbin/yast2 ]
 then
+  processAction "$msg (intr)" "/sbin/yast2 dhcp-server interface select=$NIC" $log || exit $?
   processAction "$msg (enab)" '/sbin/yast2 dhcp-server enable' $log || exit $?
 #-- Always fails even though it works - some kind of bug
+# processAction "$msg (curr)" "/sbin/yast2 dhcp-server interface current" $log || exit $?
 # processAction "$msg (stat)" '/sbin/yast2 dhcp-server status' $log || exit $?
 elif [ -x /sbin/chkconfig ]; then
   processAction "$msg" '/sbin/chkconfig dhcpd on' $log || exit $?
