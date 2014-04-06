@@ -20,6 +20,8 @@
 ##            including RedHat
 ##     Ubuntu 12.04 desktop/server; fully expect it to work on
 ##            the 10.04 or earlier releases.
+##     Debian 7 minimal server; wget https broken, added curl
+##            as fallback on wget fail.
 ##
 ##  NOTES:
 ##         This script is not comprehensive or production ready. It
@@ -280,7 +282,11 @@ else
 fi
 
 #-- Restart xinetd
-processAction "Start/Restart XINTD" "service xinetd restart" /tmp/pxe-xinetd-service.log || exit $?
+# default   == xinetd
+# Debian    == openbsd-inetd
+pkg=xinetd
+[ -f /etc/os-release -a $( grep -ic debian /etc/os-release ) -gt 0 ] && pkg='openbsd-inetd'
+processAction "Start/Restart XINTD" "service $pkg restart" /tmp/pxe-inetd-service.log || exit $?
 
 
 #-- Configure firewall (CentOS & RH)
@@ -356,7 +362,8 @@ images/floppy-grub.imz
     (
       cd $DIR || exit 1
       [ -f $FIL ] || \
-      wget https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item}
+      wget https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item} || \
+      curl https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item} > $FIL
     )
   done > /tmp/pxe-populate-tftpboot.log.$$ 2>&1
 
