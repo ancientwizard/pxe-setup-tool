@@ -27,7 +27,7 @@
 ##         This script is not comprehensive or production ready. It
 ##         makes too many assumptions and provides no options or
 ##         flexibility for alternative solutions. It simply shows
-##         one simple way to build a PXE boot server.
+##         one simple way to build a PXE boot server quickly.
 ##
 ##  ASSUMPTIONS:
 ##   1) The system to be PXE enabled is networked (kind of the point)
@@ -269,6 +269,15 @@ else
   processAction 'Create /var/lib/tftpboot' $CMD $LOG || exit $?
 fi
 
+
+#-- Symlink /srv/tftpboot (where needed)
+if [ -d /srv -a -d /var/lib/tftpboot -a ! -e /srv/tftpboot ]
+then
+  log=/tmp/pxe-symlink-tftpboot.log
+  processAction "Symlink /srv/tftpboot" 'ln -s /var/lib/tftpboot /srv/' $log || exit $?
+fi
+
+
 #-- Enable tftpd
 msg='Enabling TFTPD'
 log=/tmp/pxe-tftpd-server-enable.log
@@ -280,6 +289,7 @@ else
   showMessage "$msg"
   showStatus 0 'Assumed' || exit $?
 fi
+
 
 #-- Restart xinetd
 # default   == xinetd
