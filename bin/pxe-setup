@@ -13,71 +13,160 @@
 ##    This however is an OS service setup automation and BASH
 ##      will suit us well.
 ##
+##  AUTHOR: ancient.wizard@verizon.net (V Burns)
+##    DATE: 2014/Mar-Apr
+##
 
 ##
 ##  TESTED ON:
+##     Fedora 20 minimal server install. Expected to work
+##            on earlier versions also
 ##     CentOS 6.4 minimal server; expected to work on 3.x - 6.x
 ##            including RedHat
 ##     Ubuntu 12.04 desktop/server; fully expect it to work on
-##            the 10.04 or earlier releases.
+##            the 10.04 through "current" releases.
 ##     Debian 7 minimal server; wget https broken, added curl
-##            as fallback on wget fail.
+##            as fallback on a wget fail. (yuck!)
 ##     OpenSUSE 13.1; expected to work with 11.X and above
+##            10.x is suffciently different it will *not* work
+##            even though the server is capable of providing PXE
+##            services.
+##     Arch-Linux base install
 ##
 ##  NOTES:
 ##         This script is not comprehensive or production ready. It
 ##         makes too many assumptions and provides no options or
 ##         flexibility for alternative solutions. It simply shows
-##         one simple way to build a PXE boot server quickly.
+##         one simple way to build a PXE boot server quickly. It is
+##         a demonstration after all!
 ##
-##  ASSUMPTIONS:
-##   1) The system to be PXE enabled is networked (kind of the point)
-##   2) The system this script is run on is not doing something importent
+##  ASSUMPTIONS & ISSUES:
+##   1) The system to be PXE enabled has networking up and working
+##      properly. (kind of the point)
+##   2) The system to be PXE enabled is the "default/minimal" install
+##      without local standards applied. For example a system with
+##      iptables enabled on which otherwise would not be enabled
+##      could be a problem as it may not be enabled properly to
+##      allow connections to services by this script. In that case
+##      disable the firewall or manually configure it yourself. The
+##      primary issue will be that we were unable to "save" the
+##      firewall filters before a restart so they were lost. Check the
+##      logs after the run fpor the comamnd used to "add" the filter
+##      and you can deal with saving to allow fro reboots and restarts
+##      remembering this/these setting(s).
+##   3) The curl package should be pre-installed on Debian because wget
+##      may fail to work with the https: protocol to pull menu content.
+##   4) The system to be PXE enabled is not doing something important
 ##       (we will break any exising dhcp & tftp servers on the system,
 ##        the script assumes it has control)
-##   3) The PXE system has Internet access to allow package installation
-##   4) has standard DHCP services from a local router
+##   5) The PXE system has Internet access to allow package installation.
+##      Configurating proxies is yours todo before using the script!
+##   6) Local Network has standard DHCP services from a local router
 ##      [ home OR office etc ] ( we don't need fixed IP's for this,
 ##        and we only want to handle PXE DHCP requests if we can )
-##   5) Other system(s)/VM(s) with PXE client enabled NIC's are available
-##      (we need the server and at least one client to demo)
+##   7) Other system(s)/VM(s) with PXE client enabled NIC's are available
+##      (we need the server and at least one client to demo example)
+##   8) Arch Linux may not work; during my tests the pxelinux.0 which
+##      is offered by teh Arch system crashes my test PXE client.
+##
+##   Enjoy!
 ##
 
-## Define few Functions
+
+#-- Build PATH
+PATH=/usr/bin:/bin
+[ -d /usr/sbin ] && PATH=${PATH}:/usr/sbin
+[ -d /sbin ] && PATH=${PATH}:/sbin
+
+
+#-- Detect (problem) Commands
+CMD_IP=$(which ip 2>/dev/null||echo ip-notfound)
+CMD_IPCALC=$(which ipcalc 2>/dev/null||echo ipcalc-notfound)
+CMD_IFCFG=$(which ifconfig 2>/dev/null||echo ifconfig-notfound)
+CMD_SERVICE=$(which service 2>/dev/null||echo service-notfound)
+CMD_SYSTEMCTL=$(which systemctl 2>/dev/null||echo systemctl-notfound)
+CMD_FWCMD=$(which firewall-cmd 2>/dev/null||echo firewall-cmd-notfound)
+
+
+## Define a few Functions
 
 isNicUP()
 {
-  /sbin/ifconfig ${1-eth0} > /dev/null 2>&1
+  [ -x $CMD_IP    ] && { $CMD_IP link show ${1-eth0} 2>/dev/null|grep -qi up; return $?; }
+  [ -x $CMD_IFCFG ] && $CMD_IFCFG ${1-eth0} > /dev/null 2>&1
   return $?
 }
 
 getNicIP()
 {
-  echo $( /sbin/ifconfig ${1-eth0}|grep 'inet '|awk '{print $2}'|sed 's/^addr://' )
+  [ -x $CMD_IP ] && {
+    echo $($CMD_IP addr show ${1-eth0}|grep 'inet '|awk '{print $2}'|sed 's=/.*==' 2>/dev/null)
+    return $?
+  }
+  [ -x $CMD_IFCFG ] && echo $( $CMD_IFCFG ${1-eth0}|grep 'inet '|awk '{print $2}'|sed 's/^addr://' )
 }
 
 getNicBcst()
 {
-  BCST=$( /sbin/ifconfig ${1-eth0}|grep 'inet addr:'|awk '{print $3}'|awk -F: '{print $2}' )
+  BCST=
 
-  BCST=$( /sbin/ifconfig ${1-eth0}|grep 'inet ' | \
-    sed 's/netmask /netmask:/g' | \
-    sed 's/broadcast /broadcast:/g' | \
-    awk '{print $4}'|awk -F: '{print $2}' )
+  [ -x $CMD_IP -a -x $CMD_IPCALC ] && {
+    IPMASK=$($CMD_IP addr show ${1-eth0}|grep 'inet '|awk '{print $2}' 2>/dev/null)
+    BCST=$($CMD_IPCALC -b $IPMASK)
+    BCST=${BCST#*=}
+  }
+
+  [ -x $CMD_IP -a "$BCST" == '' ] && {
+    BCST=$($CMD_IP addr show ${1-eth0}|grep 'inet '|awk '{print $4}' 2>/dev/null)
+  }
+
+  [ -x $CMD_IFCFG -a "$BCST" == '' ] && {
+    BCST=$( /sbin/ifconfig ${1-eth0}|grep 'inet addr:'|awk '{print $3}'|awk -F: '{print $2}' )
+  }
+
+  [ -x $CMD_IFCFG -a "$BCST" == '' ] && {
+    BCST=$( $CMD_IFCFG ${1-eth0}|grep 'inet ' | \
+      sed 's/netmask /netmask:/g' | \
+      sed 's/broadcast /broadcast:/g' | \
+      awk '{print $4}'|awk -F: '{print $2}' )
+  }
 
   echo $BCST
 }
 
 getNicMask()
 {
-  MASK=$( /sbin/ifconfig ${1-eth0}|grep 'inet addr:'|awk '{print $4}'|awk -F: '{print $2}' )
+  MASK=
 
-  MASK=$( /sbin/ifconfig ${1-eth0}|grep 'inet ' | \
-    sed 's/netmask /netmask:/g' | \
-    sed 's/broadcast /broadcast:/g' | \
-    awk '{print $3}'|awk -F: '{print $2}' )
+  [ -x $CMD_IP -a -x $CMD_IPCALC ] && {
+    IPMASK=$($CMD_IP addr show ${1-eth0}|grep 'inet '|awk '{print $2}' 2>/dev/null)
+    MASK=$( $CMD_IPCALC -m $IPMASK)
+    MASK=${MASK#*=}
+  }
+
+  [ -x $CMD_IP -a "${MASK}" == '' ] && {
+    MASK=$($CMD_IP addr show ${1-eth0}|grep 'inet '|awk '{print $2}'|sed 's=.*/==' 2>/dev/null)
+    case $MASK in
+      24)
+        MASK='255.255.255.0' ;;
+    esac
+  }
+
+# MASK=$( $CMD_IFCFG ${1-eth0}|grep 'inet addr:'|awk '{print $4}'|awk -F: '{print $2}' )
+
+  [ -x $CMD_IFCFG -a "${MASK}" == '' ] && {
+    MASK=$( $CMD_IFCFG ${1-eth0}|grep 'inet ' | \
+      sed 's/netmask /netmask:/g' | \
+      sed 's/broadcast /broadcast:/g' | \
+      awk '{print $3}'|awk -F: '{print $2}' )
+  }
 
   echo $MASK
+}
+
+getDefaultRoute()
+{
+  ip route show|grep -i default|head -1|awk '{print $3}' 2> /dev/null
 }
 
 isNicIPed()
@@ -87,69 +176,22 @@ isNicIPed()
   return $?
 }
 
-hasNicConfig()
-{
-  if [ -f /etc/centos-release -o -f /etc/redhat-release ]
-  then
-    [ -d /etc/sysconfig/network-scripts/ -a -e /etc/sysconfig/network-scripts/ifcfg-$1 ]
-    return $?
-  fi
-
-  if [ -f /etc/lsb-release -a -f /etc/network/interfaces ]
-  then
-    #-- YUCK! - not reliable
-    # grep -q "$NIC" /etc/network/interfaces
-
-    #-- config may be "unseen" OR "subtle"
-    #-- (bad: assume, if it's up life is good)
-    isNicUP $1 && isNicIPed $1 && return $?
-  fi
-
-  return $?
-}
-
-isNicEnabled()
-{
-  [ -d /etc/sysconfig/network-scripts/ -a -e /etc/sysconfig/network-scripts/ifcfg-$1 ] && \
-  grep -i '^ONBOOT=yes'   /etc/sysconfig/network-scripts/ifcfg-$1 > /dev/null 2>&1 ||
-  grep -i '^ONBOOT="yes"' /etc/sysconfig/network-scripts/ifcfg-$1 > /dev/null 2>&1 && return $?
-
-  [ -d /etc/sysconfig/network/ -a /etc/sysconfig/network/ifcfg-$1 ] && \
-  grep -i "^STARTMODE='auto'" /etc/sysconfig/network/ifcfg-$1 > /dev/null 2>&1 && return $?
-
-  return $?
-}
-
-enableNic()
-{
-  #-- RH, CentOS or Fedora etc
-  [ -d /etc/sysconfig/network-scripts/ -a -e /etc/sysconfig/network-scripts/ifcfg-$1 ] && \
-  {
-    cat /etc/sysconfig/network-scripts/ifcfg-$1 | \
-    sed 's/ONBOOT=no/ONBOOT=yes/' | sed 's/ONBOOT="no"/ONBOOT="yes"' > /tmp/ifcfg-$1
-    cat /tmp/ifcfg-$1 > /etc/sysconfig/network-scripts/ifcfg-$1
-    rm -f /tmp/ifcfg-$1
-  }
-
-  return $?
-}
-
-TurnUpNIC()
+CheckNic()
 {
   #-- Selected NIC
   NIC=${1-eth0}
 
-  hasNicConfig $NIC || return $?
-  isNicEnabled $NIC || enableNic $NIC
-  isNicUP      $NIC && isNicIPed $NIC && \
+  isNicUP $NIC && isNicIPed $NIC && \
   {
-    showMessage "Networking Status $NIC"
+    showMessage "NIC Status    ($NIC)"
     showStatus $?
-    return $?
   }
 
-  ifup $NIC > /dev/null 2>&1
+  return $?
 }
+
+
+OK=0 FAIL=1 WARN=-1 INFO=-2
 
 showMessage() { printf "  %-32s : " "$1"; }
 showStatus()
@@ -159,6 +201,7 @@ showStatus()
 
   [ $STA -eq  0 ] && ST=OK || ST=FAIL
   [ $STA -eq -1 ] && { ST=WARN; STA=1; }
+  [ $STA -eq -2 ] && { ST=INFO; STA=1; }
   [ '' == "$NOT" ] && echo $ST
   [ '' == "$NOT" ] || printf "%-4s [ %s ]\n" $ST "$NOT"
 
@@ -174,6 +217,7 @@ processAction()
   STATUS=0
   
   showMessage "$MSG"
+  ( echo '#'; echo "# $CMD" ) >> ${LOG}.$$ 2>&1
   $CMD >> ${LOG}.$$ 2>&1
   STATUS=$?
   showStatus $STATUS "check: ${LOG}.$$"
@@ -183,7 +227,9 @@ processAction()
 
 
 ##
-## Announce our title & locate a package installer
+##  Announce our title
+##  Detect OS "TYPE OR STyle"
+##  locate a package installer
 ##
 
 echo
@@ -191,47 +237,129 @@ echo '  PXE Environment Setup Tool'
 echo '   ( an automation demonstration script )'
 echo
 
-showMessage 'Pruned Logs from Prior runs'
+showMessage 'Prune Logs from prior runs'
 /bin/rm -f /tmp/pxe-*.log.[0-9]*
 showStatus 0 || exit $?
 
+
+OS_NAME=
+OS_Ubuntu=0 OS_openSUSE=0 OS_Fedora=0 OS_RedHat=0
+OS_CentOS=0 OS_Debian=0   OS_Arch=0
+
+showMessage 'Detect OS Name'
+while :
+do
+  release=os-release
+  if [ -f /etc/$release ]
+  then
+    OS_NAME=$(grep -i '^name' /etc/$release)
+    OS_NAME=${OS_NAME#*=}
+    OS_NAME=${OS_NAME#\"}
+    OS_NAME=${OS_NAME%\"}
+    OS_NAME=${OS_NAME%% *}
+    break
+  fi
+
+  release=system-release
+  if [ -f /etc/$release ]
+  then
+    OS_NAME=$( head -1 /etc/$release )
+    OS_NAME=${OS_NAME%% *}
+    break
+  fi
+
+  release=lsb-release
+  if [ -f /etc/$release ]
+  then
+    OS_NAME=$(grep -i 'id=' /etc/$release|head -1)
+    OS_NAME=${OS_NAME#*=}
+    OS_NAME=${OS_NAME#\"}
+    OS_NAME=${OS_NAME%\"}
+    OS_NAME=${OS_NAME%% *}
+    break
+  fi
+
+  release=redhat-release
+  if [ -f /etc/$release ]
+  then
+    OS_NAME=$(head -1 /etc/$release|sed 's= ==')
+    OS_NAME=${OS_NAME%% *}
+    break
+  fi
+
+  break
+done
+
+if [ "$OS_NAME" == '' ]
+then
+  showStatus $INFO 'Not Detected'
+  ls -l /etc/*release
+  echo
+  exit 1
+else
+  showStatus $INFO "$OS_NAME"
+fi
+
+#-- Set an OS FLAG
+case $OS_NAME in
+  Ubuntu)   OS_Ubuntu=1 ;;
+  openSUSE) OS_openSUSE=1 ;;
+  Fedora)   OS_Fedora=1 ;;
+  RedHat)   OS_RedHat=1 ;;
+  CentOS)   OS_CentOS=1 ;;
+  Debian)   OS_Debian=1 ;;
+  Arch)     OS_Arch=1   ;;
+esac
+
+
 INSTALLER=
 
+[ -x /usr/bin/pacman  ] && INSTALLER='/usr/bin/pacman  --sync --noconfirm'
 [ -x /usr/bin/yum     ] && INSTALLER='/usr/bin/yum     --assumeyes  install'
 [ -x /usr/bin/apt-get ] && INSTALLER='/usr/bin/apt-get --assume-yes install'
 [ -x /usr/bin/zypper  ] && INSTALLER='/usr/bin/zypper  --non-interactive install'
 
-[ '' == "$INSTALLER" ] && iFound=1 || iFound=0
+[ '' == "$INSTALLER"  ] && iFound=1 || iFound=0
 
 showMessage 'Locate package installer'
 showStatus $iFound "$INSTALLER" || exit $?
 
 
 ##
-##  The Steps we (AKA: YOU) need to take to bring PXE booting to life.
+##  The Steps we/YOU need to take to bring PXE booting to life.
 ##
 ##   1) Build a system/VM using a Linux Distro that this
 ##      script supports; you must do this yourself and download
-##      this script to it. (I used CentOS "minimal-server")
+##      this script to it.
 ##
-##   2) My NIC was configured but not enabled to be turned on
-##      at boot. I suspect a hold-over from a desktop setup where
-##      some service allows the user to control it. All very ugly.
-##      Lets make sure we're connected to the network or there is
-##      little else we can do!
+##   Yes - this step is on you!
 ##
 
+##
+##   2) Verify we have at least one working network interface.
+##      We'll be configuring DHCP for the first that is working.
+##      It is possible to use all of them and setup services to
+##      respond to each interface properly to make this work.
+##        (I could add this feature if properly motivated)
+##
 
 #-- First NIC UP wins!
 
-NICX='eth0 eth1 eth2 eth3'
-NICS=$( cd /proc/sys/net/ipv4/conf; ls -d * | egrep -v 'all|default|lo' )
-[ '' == "$NICS" ] && NICS="$NICX"
+NICS=$( cd /sys/class/net/; ls -d * | egrep -v 'all|default|lo' )
 
 for NIC in ${NICS}
 do
-  TurnUpNIC $NIC && break
+  CheckNic $NIC && break
 done
+
+[ $? -eq 1 ] && exit $?
+
+showMessage "NIC IP        ($NIC)"
+showStatus  $INFO "$(getNicIP $NIC)"
+showMessage "NIC Mask      ($NIC)"
+showStatus  $INFO "$(getNicMask $NIC)"
+showMessage "NIC Broadcast ($NIC)"
+showStatus  $INFO "$(getNicBcst $NIC)"
 
 
 ##
@@ -239,24 +367,31 @@ done
 ##
 
 #-- Install tftpd and dependencies
-# RH/CentOS/Fedora == tftp-server
-# Ubuntu           == tftpd
-# openSUSE         == tftp yast2-tftp-server
 msg='Installing TFTPD & XINETD Svcs'
+log='/tmp/pxe-tftpd-service.log'
 pkg='tftpd'
-[ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg='tftp-server'
-[ -f /etc/SuSE-release                             ] && pkg='tftp yast2-tftp-server'
-log=/tmp/pxe-tftpd-service.log
+
+case $OS_NAME in
+  RedHat|CentOS|Fedora)
+            pkg='tftp-server' ;;
+  openSUSE) pkg='tftp yast2-tftp-server' ;;
+  Arch)     pkg='iputils xinetd' ;;
+esac
+
+showMessage 'Package List (tftpd)'
+showStatus $INFO "${OS_NAME}: $pkg"
 
 processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 
 
 #-- Provide a /etc/xinetd.d/tftp
 ##  (if not included in package YUCK!)
-if [ -d /etc/xinetd.d -a ! -f /etc/xinetd.d/tftp ]
+if [ -d /etc/xinetd.d ]
 then
-  showMessage 'Install /etc/xinetd.d/tftp'
-  cat > /etc/xinetd.d/tftp <<!TFTP
+  if [ ! -f /etc/xinetd.d/tftp ]
+  then
+    showMessage 'Install /etc/xinetd.d/tftp'
+    cat > /etc/xinetd.d/tftp <<!TFTP
 # Installed by $0
 service tftp
 {
@@ -273,12 +408,13 @@ service tftp
 # END
 !TFTP
 
-  [ -f /etc/xinetd.d/tftp ] && chmod 0644 /etc/xinetd.d/tftp
+    [ -f /etc/xinetd.d/tftp ] && chmod 0644 /etc/xinetd.d/tftp
 
-  showStatus $? || exit $?
-else
-  showMessage 'Install /etc/xinetd.d/tftp'
-  showStatus 0 'Preexists' || exit $?
+    showStatus $? || exit $?
+  else
+    showMessage 'Install /etc/xinetd.d/tftp'
+    showStatus 0 'Preexists' || exit $?
+  fi
 fi
 
 
@@ -289,29 +425,40 @@ then
   showMessage 'Create /var/lib/tftpboot'
   showStatus 0 'Preexists' || exit $?
 else
-  CMD=/tmp/pxe-create-tftpboot-dir.bash
-  LOG=/tmp/pxe-create-tftpboot-dir.log
-  cat > $CMD <<!MKDIR
+  cmd=/tmp/pxe-create-tftpboot-dir.bash
+  log=/tmp/pxe-create-tftpboot-dir.log
+  cat > $cmd <<!MKDIR
 #!/bin/bash
-    mkdir -p     /var/lib/tftpboot
-    chmod 0755   /var/lib/tftpboot
-    chown nobody /var/lib/tftpboot
-    [ -x /sbin/yast2 ] && chown tftp:tftp /var/lib/tftpboot
+
+ST=0
+mkdir -p     /var/lib/tftpboot || ST=\$?
+chmod 0755   /var/lib/tftpboot || ST=\$?
+chown nobody /var/lib/tftpboot || ST=\$?
+if [ -x /sbin/yast2 ] ; then
+  chown tftp:tftp /var/lib/tftpboot || ST=\$?
+fi
+exit \$ST
 !MKDIR
-  chmod 0755 $CMD
-  processAction 'Create /var/lib/tftpboot' $CMD $LOG || exit $?
+  chmod 0755 $cmd
+  processAction 'Create /var/lib/tftpboot' $cmd $log || exit $?
 fi
 
 
 #-- Symlink /srv/tftpboot (where needed)
+log=/tmp/pxe-symlink-tftpboot.log
+
+if [ -d /srv -a -h /srv/tftpboot ]
+then
+  /bin/rm -f /srv/tftpboot >> ${log}.$$ 2>&1
+fi
+
 if [ -d /srv/tftpboot -a ! -h /srv/tftpboot ]
 then
-  rmdir /srv/tftpboot > /dev/null 2>&1
+  rmdir /srv/tftpboot >> ${log}.$$ 2>&1
 fi
 
 if [ -d /srv -a -d /var/lib/tftpboot -a ! -e /srv/tftpboot ]
 then
-  log=/tmp/pxe-symlink-tftpboot.log
   processAction "Symlink /srv/tftpboot" 'ln -s /var/lib/tftpboot /srv/' $log || exit $?
 fi
 
@@ -333,50 +480,128 @@ else
   showStatus 0 'Assumed' || exit $?
 fi
 
+#-- verify (Hard Cases - manual)
+if [ -f /etc/inetd.conf -a "$OS_NAME" == 'Debian' ]
+then
+  showMessage "$msg (inetd.conf)"
+  echo "sed -i '/^tftp/ s=/srv/tftp=/var/lib/tftpboot=' /etc/inetd.conf" >> ${log}.$$ 2>&1
+  sed -i '/^tftp/ s=/srv/tftp=/var/lib/tftpboot=' /etc/inetd.conf >> ${log}.$$ 2>&1
+  showStatus $? "check: ${log}.$$" || exit $?
+# processAction "$msg" "sed -i '/^tftp/ s=/srv/tftp=/var/lib/tftpboot=' /etc/inetd.conf" $log || exit $?
+fi
+
+if [ -f /etc/xinetd.d/tftp ]
+then
+  #-- Verify disable setting
+  TFTPD_DISABLED=$(grep -i disable /etc/xinetd.d/tftp|awk -F= '{print $2}'|sed 's=[ \"]==g') 
+  showMessage "$msg (manual)"
+  if [ "$TFTPD_DISABLED" == 'yes' ]
+  then
+    sed -i '/disable/ s/yes/no/i' /etc/xinetd.d/tftp >> ${log}.$$ 2>&1
+    showStatus $? "enabled (${log}.$$)" || exit $?
+  else
+    showStatus 0 "Verified (${log}.$$)" || exit $?
+  fi
+
+  #-- Verify tftpboot location
+  TFTPD_BOOTDIR=$(grep -i server_args /etc/xinetd.d/tftp|awk -F= '{print $2}'|sed 's=-[a-z]=='|sed 's=[ \"]==g') 
+  showMessage "Configure tftpboot dir"
+  if [ "$TFTPD_BOOTDIR" == '/var/lib/tftpboot' ]
+  then
+    showStatus 0 'Verified' || exit $?
+  else
+    TFTPD_BOOTDIR=$(echo $TFTPD_BOOTDIR|sed 's=/=\\/=g')
+    sed -i '/server_args/ s/'${TFTPD_BOOTDIR}'/\/var\/lib\/tftpboot/' /etc/xinetd.d/tftp
+    showStatus $? 'set: /var/lib/tftpboot' || exit $?
+  fi
+fi
+
 
 #-- Restart xinetd
 # default   == xinetd
 # Debian    == openbsd-inetd
-pkg=xinetd
 msg='Start/Restart XINETD'
 log=/tmp/pxe-inetd-service.log
-[ -f /etc/os-release -a $( grep -ic debian /etc/os-release ) -gt 0 ] && pkg='openbsd-inetd'
+pkg=xinetd
 
+case $OS_NAME in Debian) pkg='openbsd-inetd' ;; esac
 
-if [ -x /usr/bin/systemctl ]
+if [ -x $CMD_SYSTEMCTL ]
 then
-  processAction "$msg (start)"  "systemctl start  $pkg" $log || exit $?
-  processAction "$msg (enable)" "systemctl enable $pkg" $log || exit $?
-  processAction "$msg (status)" "systemctl status $pkg" $log || exit $?
+  processAction "$msg (start)"  "$CMD_SYSTEMCTL start  $pkg" $log || exit $?
+  processAction "$msg (enable)" "$CMD_SYSTEMCTL enable $pkg" $log || exit $?
+  processAction "$msg (status)" "$CMD_SYSTEMCTL status $pkg" $log || exit $?
+elif [ -x $CMD_SERVICE ]; then
+  processAction "$msg"          "$CMD_SERVICE $pkg restart" $log || exit $?
+  processAction '$msg (status)' "$CMD_SERVICE $pkg status"  $log || exit $?
 else
-  processAction "$msg"          "service $pkg restart" $log || exit $?
-  processAction '$msg (status)' "service $pkg status"  $log || exit $?
+  showMessage 'Service (re)start script'
+  showStatus $WARN 'undetected'
 fi
+
 
 #-- Configure firewall
-if [ -f /etc/os-release -a $( grep -ic opensuse /etc/os-release ) -gt 0 ]
-then
-  #-- (openSUSE)
-  log=/tmp/pxe-firewall.log
-  for svc in 'service:dhcp-server' 'service:tftp'
-  do
-    processAction "Firewall $svc" "/sbin/yast2 firewall services add service=$svc zone=EXT" $log || exit $?
-  done
+log=/tmp/pxe-iptables.log
 
-elif [ -f /etc/centos-release -o -f /etc/redhat-release ]; then
-  #-- (CentOS & RH)
-  msg='Add iptables rule for tftpd'
-  showMessage "$msg"
-  /sbin/iptables --list --line-numbers | grep -q tftp || \
-  /sbin/iptables --insert INPUT 5 -m state --state NEW --proto udp --dport 69 -j ACCEPT > \
-      /tmp/pxe-iptables.log.$$ 2>&1
-  showStatus 0 "check: /tmp/pxe-iptables.log.$$" || exit $?
+case $OS_NAME in
+  openSUSE)
+    #-- (openSUSE)
+    msg='Configure Firewall Rules'
+    showMessage "$msg"
+    for svc in 'service:dhcp-server' 'service:tftp'
+    do
+      processAction "Firewall $svc" "/sbin/yast2 firewall services add service=$svc zone=EXT" $log || exit $?
+    done
+    showStatus $? "check: ${log}.$$" || exit $?
+  ;;
 
-  msg='Save iptabels rules'
-  showMessage "$msg"
-  /sbin/iptables-save > /etc/sysconfig/iptables 2>> /tmp/iptables.log.$$
-  showStatus 0 "check: /tmp/pxe-iptables.log.$$" || exit $?
-fi
+  RedHat|CentOS)
+    #-- (CentOS & RH)
+    msg='Add iptables rule for tftpd'
+    showMessage "$msg"
+    /sbin/iptables --list --line-numbers >> ${log}.$$
+    echo '/sbin/iptables --insert INPUT 5 -m state --state NEW --proto udp --dport 69 -j ACCEPT' >> \
+        ${log}.$$ 2>&1
+    /sbin/iptables --list --line-numbers | grep -q tftp || \
+    /sbin/iptables --insert INPUT 5 -m state --state NEW --proto udp --dport 69 -j ACCEPT >> \
+        ${log}.$$ 2>&1
+    showStatus 0 "check: ${log}.$$" || exit $?
+
+    msg='Save iptables rules'
+    processAction "$msg" "$CMD_SERVICE iptables save" $log || exit $?
+  ;;
+
+  Fedora)
+    #-- (Fedora)
+    msg='Add iptables rule for tftpd'
+    showMessage "$msg"
+    echo '# using iptables' >> ${log}.$$
+    echo '/sbin/iptables --insert IN_public_allow 1 -m state --state NEW --proto udp --dport 69 -j ACCEPT' >> \
+        ${log}.$$ 2>&1
+    /sbin/iptables --list --line-numbers | grep -q tftp || \
+    /sbin/iptables --insert IN_public_allow 1 -m state --state NEW --proto udp --dport 69 -j ACCEPT >> \
+        ${log}.$$ 2>&1
+    showStatus 0 "check: ${log}.$$" || exit $?
+
+    if [ -x $CMD_FWCMD ]
+    then
+      echo '# using firewall-cmd' >> ${log}.$$
+      echo "${CMD_FWCMD} --permanent --add-service=tftp" >> ${log}.$$ 2>&1
+      processAction "$msg" "${CMD_FWCMD} --permanent --add-service=tftp" $log || exit $?
+    fi
+
+    msg='Save iptables rules'
+    [ -f /etc/sysconfig/iptables-config ] && \
+      sed -i '/IPTABLES_SAVE_ON_RESTART=/ s/no/yes/i' /etc/sysconfig/iptables-config >> \
+        ${log}.$$ 2>&1
+    processAction "$msg" "$CMD_SYSTEMCTL restart firewalld" $log || exit $?
+  ;;
+
+  *)
+    showMessage 'Configure Firewall Rules'
+    showStatus -2 'Skipped: assumed not required'
+  ;;
+esac
 
 
 ##
@@ -385,8 +610,6 @@ fi
 ##
 
 #-- Install syslinux and dependencies
-# RH/CentOS == syslinux
-# Ubuntu    == syslinux
 msg='Installing SYSLINUX software'
 pkg='syslinux'
 log=/tmp/pxe-syslinux-install.log
@@ -398,7 +621,9 @@ processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 ##   (populate it!)
 
 (
+  log=/tmp/pxe-populate-tftpboot.log
   TFTPBOOTTGT=/var/lib/tftpboot
+
   [ -d $TFTPBOOTTGT ] || { echo 'Failed to find tftpboot dir'; exit 1; }
 
   cd $TFTPBOOTTGT || exit 1
@@ -438,23 +663,24 @@ images/memtest86+-5.01.iso.gz
       wget https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item} || \
       curl https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item} > $FIL
     )
-  done > /tmp/pxe-populate-tftpboot.log.$$ 2>&1
+  done >> ${log}.$$ 2>&1
 
-  showStatus $? "check: /tmp/pxe-populate-tftpboot.log.$$" || exit $?
+  showStatus $? "check: ${log}.$$" || exit $?
 
 
   cd $TFTPBOOTTGT || exit 1
   ST=0
   showMessage 'Populating tftpboot binaries'
   (
-    [ -f pxelinux.0   ] || { ln $( echo /usr/*/syslinux/pxelinux.0   ) || ST=1; }
+    SLBASE=$(dirname $(find /usr -name pxelinux.0|head -1))
+    [ -f pxelinux.0   ] || { ln ${SLBASE}/pxelinux.0 || ST=1; }
     [ -d bin ] || mkdir bin
     cd bin || ST=1
-    [ -f menu.c32     ] || { ln $( echo /usr/*/syslinux/menu.c32     ) || ST=1; }
-    [ -f vesamenu.c32 ] || { ln $( echo /usr/*/syslinux/vesamenu.c32 ) || ST=1; }
-    [ -f memdisk      ] || { ln $( echo /usr/*/syslinux/memdisk      ) || ST=1; }
-  ) >> /tmp/pxe-populate-tftpboot.log.$$ 2>&1
-  showStatus $ST  "check: /tmp/pxe-populate-tftpboot.log.$$"
+    [ -f menu.c32     ] || { ln ${SLBASE}/menu.c32     || ST=1; }
+    [ -f vesamenu.c32 ] || { ln ${SLBASE}/vesamenu.c32 || ST=1; }
+    [ -f memdisk      ] || { ln ${SLBASE}/memdisk      || ST=1; }
+  ) >> ${log}.$$ 2>&1
+  showStatus $ST  "check: ${log}.$$"
 )
 
 
@@ -468,14 +694,16 @@ images/memtest86+-5.01.iso.gz
 ##
 
 #-- Install dhcpd and dependencies
-# RH/CentOS == dhcp
-# Ubuntu    == dhcp3-server
 msg='Installing DHCPD server'
 pkg='dhcp3-server'
 log=/tmp/pxe-dhcpd-service.log
 
-[ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg='dhcp'
-[ -f /etc/os-release -a $( grep -ic opensuse /etc/os-release ) -gt 0 ] && pkg='yast2-dhcp-server dhcp-server'
+case $OS_NAME in
+  RedHat|CentOS|Fedora|Arch)
+            pkg='dhcp' ;;
+  Ubuntu)   pkg='dhcp3-server' ;;
+  openSUSE) pkg='yast2-dhcp-server dhcp-server' ;;
+esac
 
 processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 
@@ -492,6 +720,7 @@ showMessage 'Building dhcpd.conf file'
 NIC_ADDR=$(getNicIP   $NIC)
 NIC_MASK=$(getNicMask $NIC)
 NIC_BCST=$(getNicBcst $NIC)
+NIC_DRTR=$( getDefaultRoute )
 
 declare -a ADDR=( $(echo $NIC_ADDR|sed 's/[.]/ /g') )
 declare -a MASK=( $(echo $NIC_MASK|sed 's/[.]/ /g') )
@@ -507,9 +736,7 @@ NIC_NST="${NIC_NST}.$(( ( ${ADDR[3]} & ${MASK[3]} ) + 1 ))"
 
 NIC_NED="${BCST[0]}.${BCST[1]}.${BCST[2]}.$(( ${BCST[3]} - 1 ))"
 
-NIC_RNG="${BCST[0]}.${BCST[1]}.${BCST[2]}.240"
-
-NIC_RTR=$( netstat -rn|grep $NIC|grep '^0.0.0.0'|awk '{print $2}' )
+NIC_RNG="${BCST[0]}.${BCST[1]}.${BCST[2]}.$(( ${BCST[3]} - 15 ))"
 
 cat > /tmp/dhcpd.conf <<!EOF
 #
@@ -521,11 +748,11 @@ cat > /tmp/dhcpd.conf <<!EOF
 allow booting;
 allow bootp;
 
-option domain-name "YOUR.DNS.DOMAIN.org";
-option domain-name-servers ${NIC_RTR};
-option routers ${NIC_RTR};
-option ntp-servers ${NIC_RTR};
-option netbios-name-servers ${NIC_RTR};
+option domain-name "home";  #"YOUR.DNS.DOMAIN.org";
+option domain-name-servers ${NIC_DRTR};
+option routers ${NIC_DRTR};
+option ntp-servers ${NIC_DRTR};
+option netbios-name-servers ${NIC_DRTR};
 
 default-lease-time 1800;
 
@@ -551,7 +778,7 @@ group {
     next-server ${NIC_ADDR};
     range ${NIC_RNG} ${NIC_NED};
     max-lease-time 4800;
-    option routers ${NIC_RTR};
+    option routers ${NIC_DRTR};
     option subnet-mask ${NIC_MASK};
     option time-offset -5;
   }
@@ -561,9 +788,18 @@ group {
 !EOF
 
 DHCPDCONF=/etc/dhcp/dhcpd.conf
+
 [ -f /etc/dhcpd.conf ] && DHCPDCONF=/etc/dhcpd.conf
 
-if diff /tmp/dhcpd.conf $DHCPDCONF > /dev/null 2>&1
+#-- Arch Linux HACK!
+if [ "$OS_NAME" == 'Arch' -a "$DHCPDCONF" == '/etc/dhcpd.conf' ]
+then
+  #-- ensure /etc/dhcpd.conf is always over written!
+  ##   by essentially making it empty
+  echo "# this is /etc/dhcpd.conf" > /etc/dhcpd.conf >> ${log}.$$ 2>&1
+fi
+
+if diff /tmp/dhcpd.conf $DHCPDCONF >> ${log}.$$ 2>&1
 then
   showStatus 0 'check: /tmp/dhcpd.conf - no change, not installed'
 else
@@ -583,6 +819,14 @@ fi
 #-- Enable DHCPD
 msg='Enabling DHCP server'
 log=/tmp/pxe-dhcpd-service.log
+pkg=isc-dhcp-server
+
+case $OS_NAME in
+  RedHat|CentOS) pkg=dhcpd ;;
+  openSUSE)      pkg=dhcpd ;;
+  Fedora)        pkg=dhcpd ;;
+  Arch)          pkg=dhcpd4 ;;
+esac
 
 if [ -x /sbin/yast2 ]
 then
@@ -592,7 +836,10 @@ then
 # processAction "$msg (curr)" "/sbin/yast2 dhcp-server interface current" $log || exit $?
 # processAction "$msg (stat)" '/sbin/yast2 dhcp-server status' $log || exit $?
 elif [ -x /sbin/chkconfig ]; then
-  processAction "$msg" '/sbin/chkconfig dhcpd on' $log || exit $?
+  processAction "$msg" "/sbin/chkconfig $pkg on" $log || exit $?
+elif [ -x $CMD_SYSTEMCTL ]; then
+  processAction "$msg (disable)" "$CMD_SYSTEMCTL disable $pkg" $log || exit $?
+  processAction "$msg (enable)"  "$CMD_SYSTEMCTL enable  $pkg" $log || exit $?
 else
   showMessage "$msg"
   showStatus 0 'Assumed' || exit $?
@@ -602,20 +849,16 @@ fi
 #-- Start/Restart DHCP server
 
 msg='Start/Restart DHCP'
-pkg=isc-dhcp-server
-log=/tmp/pxe-dhcpd-service.log
 
-[ -f /etc/centos-release -o -f /etc/redhat-release ] && pkg=dhcpd
-[ -f /etc/os-release -a $( grep -ic opensuse /etc/os-release ) -gt 0 ] && pkg='dhcpd'
-
-if [ -x /usr/bin/systemctl ]
+if [ -x $CMD_SYSTEMCTL ]
 then
-  processAction "$msg (enable)" "systemctl disable $pkg" $log || exit $?
-  processAction "$msg (enable)" "systemctl enable  $pkg" $log || exit $?
-  processAction "$msg (start)"  "systemctl start   $pkg" $log || exit $?
-  processAction "$msg (status)" "systemctl status  $pkg" $log || exit $?
+  processAction "$msg (start)"   "$CMD_SYSTEMCTL restart $pkg" $log || exit $?
+  processAction "$msg (status)"  "$CMD_SYSTEMCTL status  $pkg" $log || exit $?
+elif [ -x $CMD_SERVICE ]; then
+  processAction "$msg" "$CMD_SERVICE $pkg restart" $log || exit $?
 else
-  processAction "$msg" "service $pkg restart" $log || exit $?
+  showMessage "$msg"
+  showStatus $WARN 'Restart script unknown'
 fi
 
 
@@ -624,9 +867,14 @@ echo ' TODO:'
 echo '  1) Inspect the dhcpd.conf file and change as needed to'
 echo '     meet the needs of your local network such as MAC addresses'
 echo '  2) Inspect the tftpboot directory!'
-echo '  3) PXE boot a system and enjoy the results.'
-echo '  4) ON Fedora you may need to enable tftpd yourself.'
-echo '     see: /etc/xinetd.d/tftp'
+echo '  3) Inspect that dhcp, tftp and xinetd (or simular) are enabled'
+echo '     and running as expected.'
+echo '  4) Inspect firewall settings to ensure they "took" when'
+echo '     when applied by the script; or dieable the firewall.'
+echo '     In some system the rules are applied but do not get saved'
+echo '     during the rirewall restart. Command used is found in a'
+echo '     log file above.'
+echo '  5) PXE boot a system and enjoy the results.'
 echo ''
 
 # END
