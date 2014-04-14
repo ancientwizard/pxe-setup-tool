@@ -363,26 +363,64 @@ showStatus  $INFO "$(getNicBcst $NIC)"
 
 
 ##
-##   3) Install the xinetd and tftpd services and get them up and running
+##   3) Install packages we'll be needing to implement this solution.
+##
+##     Primarily: tftpd, inetd, dhcpd and syslinux
+##         dhcpd: Answers bootp/dhcp requests from PXE systems needing
+##                an IP and other information to start the booting process
+##                from the network.
+##         inetd: Monitors the tftpd network port and runs ftpd to handle
+##                incoming tftp requests.
+##         tftpd: Provides files to PXE systems.
+##                (poor mans filesystem in a sense)
+##      syslinux: Includes binaries used by PXE
+##
+##     Secondary: wget, curl, lsof, tftp
+##         wget & curl: used by script to pull PXE menus from internet
+##                and install in the tftpboot directory. (example menus)
+##        others: Useful for troubleshooting if things do not work as
+##                expected.
 ##
 
-#-- Install tftpd and dependencies
-msg='Installing TFTPD & XINETD Svcs'
-log='/tmp/pxe-tftpd-service.log'
-pkg='tftpd'
+#-- Install selected packages and dependencies
+msg='Installing Packages'
+log='/tmp/pxe-packages.log'
+pkg='wget curl lsof tftp'
 
+## SYSLINX for everyone
+pkg="syslinux $pkg"
+
+## Packages we need to get tftpd and some form of inetd istalled
 case $OS_NAME in
   RedHat|CentOS|Fedora)
-            pkg='tftp-server' ;;
-  openSUSE) pkg='tftp yast2-tftp-server' ;;
-  Arch)     pkg='iputils xinetd' ;;
+            pkg="tftp-server $pkg" ;;
+  openSUSE) pkg="tftp yast2-tftp-server $pkg" ;;
+  Arch)     pkg="iputils xinetd $pkg" ;;
+  *)        pkg="tftpd $pkg" ;;
 esac
 
-showMessage 'Package List (tftpd)'
-showStatus $INFO "${OS_NAME}: $pkg"
+## Packages we need to get DHCPD installed
+case $OS_NAME in
+  RedHat|CentOS|Fedora|Arch)
+            pkg="dhcp $pkg" ;;
+  openSUSE) pkg="yast2-dhcp-server dhcp-server $pkg" ;;
+  *)        pkg="dhcp3-server $pkg" ;;
+esac
+
+showMessage "Package List ($OS_NAME)"
+showStatus $INFO "$pkg"
 
 processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 
+
+##
+##   4) Configure & restart services
+##
+##      - tftpd
+##      - inetd / xinetd
+##      - dhcp
+##      - firewall rules
+##
 
 #-- Provide a /etc/xinetd.d/tftp
 ##  (if not included in package YUCK!)
@@ -427,6 +465,7 @@ then
 else
   cmd=/tmp/pxe-create-tftpboot-dir.bash
   log=/tmp/pxe-create-tftpboot-dir.log
+
   cat > $cmd <<!MKDIR
 #!/bin/bash
 
@@ -439,8 +478,10 @@ if [ -x /sbin/yast2 ] ; then
 fi
 exit \$ST
 !MKDIR
+
   chmod 0755 $cmd
   processAction 'Create /var/lib/tftpboot' $cmd $log || exit $?
+  [ -f $cmd ] && rm -f $cmd
 fi
 
 
@@ -498,9 +539,9 @@ then
   if [ "$TFTPD_DISABLED" == 'yes' ]
   then
     sed -i '/disable/ s/yes/no/i' /etc/xinetd.d/tftp >> ${log}.$$ 2>&1
-    showStatus $? "enabled (${log}.$$)" || exit $?
+    showStatus $? "enabled ${log}.$$" || exit $?
   else
-    showStatus 0 "Verified (${log}.$$)" || exit $?
+    showStatus 0 "Verified ${log}.$$" || exit $?
   fi
 
   #-- Verify tftpboot location
@@ -508,7 +549,7 @@ then
   showMessage "Configure tftpboot dir"
   if [ "$TFTPD_BOOTDIR" == '/var/lib/tftpboot' ]
   then
-    showStatus 0 'Verified' || exit $?
+    showStatus 0 'Verified - /var/lib/tftpboot' || exit $?
   else
     TFTPD_BOOTDIR=$(echo $TFTPD_BOOTDIR|sed 's=/=\\/=g')
     sed -i '/server_args/ s/'${TFTPD_BOOTDIR}'/\/var\/lib\/tftpboot/' /etc/xinetd.d/tftp
@@ -520,11 +561,12 @@ fi
 #-- Restart xinetd
 # default   == xinetd
 # Debian    == openbsd-inetd
-msg='Start/Restart XINETD'
+msg='Service'
 log=/tmp/pxe-inetd-service.log
 pkg=xinetd
 
 case $OS_NAME in Debian) pkg='openbsd-inetd' ;; esac
+msg="$msg $pkg"
 
 if [ -x $CMD_SYSTEMCTL ]
 then
@@ -540,7 +582,10 @@ else
 fi
 
 
-#-- Configure firewall
+#-- Configure firewall for tftpd
+#  (I did not need to adjust firewall for dhcp)
+# iptables --verbose --insert INPUT 5 -m state --state NEW --proto udp --dport 67 -j ACCEPT
+
 log=/tmp/pxe-iptables.log
 
 case $OS_NAME in
@@ -557,8 +602,8 @@ case $OS_NAME in
 
   RedHat|CentOS)
     #-- (CentOS & RH)
-    msg='Add iptables rule for tftpd'
-    showMessage "$msg"
+    msg='Firewall rules'
+    showMessage "$msg (iptables)"
     /sbin/iptables --list --line-numbers >> ${log}.$$
     echo '/sbin/iptables --insert INPUT 5 -m state --state NEW --proto udp --dport 69 -j ACCEPT' >> \
         ${log}.$$ 2>&1
@@ -567,33 +612,33 @@ case $OS_NAME in
         ${log}.$$ 2>&1
     showStatus 0 "check: ${log}.$$" || exit $?
 
-    msg='Save iptables rules'
+    msg='Save firewall rules (iptables)'
     processAction "$msg" "$CMD_SERVICE iptables save" $log || exit $?
   ;;
 
   Fedora)
     #-- (Fedora)
-    msg='Add iptables rule for tftpd'
-    showMessage "$msg"
-    echo '# using iptables' >> ${log}.$$
-    echo '/sbin/iptables --insert IN_public_allow 1 -m state --state NEW --proto udp --dport 69 -j ACCEPT' >> \
-        ${log}.$$ 2>&1
-    /sbin/iptables --list --line-numbers | grep -q tftp || \
-    /sbin/iptables --insert IN_public_allow 1 -m state --state NEW --proto udp --dport 69 -j ACCEPT >> \
-        ${log}.$$ 2>&1
+    msg='Firewall rules'
+    showMessage "$msg (iptables)"
+    (
+      echo '# using iptables'
+      echo '# /sbin/iptables --insert IN_public_allow 1 -m state --state NEW --proto udp --dport 69 -j ACCEPT'
+      /sbin/iptables --list --line-numbers | grep -q tftp || \
+      /sbin/iptables --insert IN_public_allow 1 -m state --state NEW --proto udp --dport 69 -j ACCEPT
+    ) >> ${log}.$$ 2>&1
     showStatus 0 "check: ${log}.$$" || exit $?
 
     if [ -x $CMD_FWCMD ]
     then
-      echo '# using firewall-cmd' >> ${log}.$$
-      echo "${CMD_FWCMD} --permanent --add-service=tftp" >> ${log}.$$ 2>&1
-      processAction "$msg" "${CMD_FWCMD} --permanent --add-service=tftp" $log || exit $?
+      processAction "$msg (firewall-cmd)" "${CMD_FWCMD} --permanent --add-service=tftp" $log || exit $?
     fi
 
-    msg='Save iptables rules'
+    ## Not needed when firewalld is in use; but harmless
     [ -f /etc/sysconfig/iptables-config ] && \
       sed -i '/IPTABLES_SAVE_ON_RESTART=/ s/no/yes/i' /etc/sysconfig/iptables-config >> \
         ${log}.$$ 2>&1
+
+    msg='Restart firewalld'
     processAction "$msg" "$CMD_SYSTEMCTL restart firewalld" $log || exit $?
   ;;
 
@@ -602,19 +647,6 @@ case $OS_NAME in
     showStatus -2 'Skipped: assumed not required'
   ;;
 esac
-
-
-##
-##   4) Install syslinux; it includes the binaries to build PXE boot-chains
-##      And populate tftpboot with these binaries and our example menus
-##
-
-#-- Install syslinux and dependencies
-msg='Installing SYSLINUX software'
-pkg='syslinux'
-log=/tmp/pxe-syslinux-install.log
-
-processAction "$msg" "$INSTALLER $pkg" $log || exit $?
 
 
 #-- Prepare the /var/lib/tftpboot/ dir for usage
@@ -682,34 +714,6 @@ images/memtest86+-5.01.iso.gz
   ) >> ${log}.$$ 2>&1
   showStatus $ST  "check: ${log}.$$"
 )
-
-
-##
-##   6) Install, configure and start the DHCP service
-##      We need this to tell the PXE booting system what to do
-##      (I.E. here is you IP sir, go and get this file ... )
-##
-##   BUGS: I assume the subnet is at least a class "C" in size!
-##         (anything smaller and the computed range may be wrong)
-##
-
-#-- Install dhcpd and dependencies
-msg='Installing DHCPD server'
-pkg='dhcp3-server'
-log=/tmp/pxe-dhcpd-service.log
-
-case $OS_NAME in
-  RedHat|CentOS|Fedora|Arch)
-            pkg='dhcp' ;;
-  Ubuntu)   pkg='dhcp3-server' ;;
-  openSUSE) pkg='yast2-dhcp-server dhcp-server' ;;
-esac
-
-processAction "$msg" "$INSTALLER $pkg" $log || exit $?
-
-# iptables --verbose --insert INPUT 5 -m state --state NEW --proto udp --dport 67 -j ACCEPT
-#  (i did not have to do this for DHCP, initial packets are bcast/discovery and make it through;
-#   my best guess) - RH/CentOS
 
 
 #-- Compute Network values from the "UP" NIC
@@ -848,7 +852,7 @@ fi
 
 #-- Start/Restart DHCP server
 
-msg='Start/Restart DHCP'
+msg="Service $pkg"
 
 if [ -x $CMD_SYSTEMCTL ]
 then
