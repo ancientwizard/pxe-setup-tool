@@ -12,7 +12,7 @@
           autoyast and preseeding.
 
  How to get started:
- 1) build a bare linux system (CenOS/RedHat) - others soon to follow
+ 1) build a bare linux system (RedHat, CentOS, openSUSE) - see source for list
  2) pull the script
     # wget https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/bin/pxe-setup
  3) and run it
