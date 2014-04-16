@@ -26,27 +26,16 @@ LABEL local
 
 MENU SEPARATOR
 
-LABEL Linux Ubuntu
-	MENU LABEL ->> Install Linux - ^Ubuntu
+LABEL Linux Arch
+	MENU LABEL ->> Install Linux - ^Arch
 	TEXT HELP
   This menu item will provide install & booting options for versions
-  of the Ubuntu "Linux" Distro.
+  of the Arch "Linux" Distro.
 
   <F1> - Show MENU Description / Help for this menu system
 	ENDTEXT
 	KERNEL bin/vesamenu.c32
-	APPEND pxelinux.cfg/ubuntu
-
-LABEL Linux Red-Hat
-	MENU LABEL ->> Install Linux - ^Red-Hat
-	TEXT HELP
-  This menu item will provide install & booting options for versions
-  of the Red-Hat "Linux" Distro.
-
-  <F1> - Show MENU Description / Help for this menu system
-	ENDTEXT
-	KERNEL bin/vesamenu.c32
-	APPEND pxelinux.cfg/red-hat
+	APPEND pxelinux.cfg/arch
 
 LABEL Linux CentOS
 	MENU LABEL ->> Install Linux - ^CentOS
@@ -59,6 +48,17 @@ LABEL Linux CentOS
 	KERNEL bin/vesamenu.c32
 	APPEND pxelinux.cfg/cent-os
 
+LABEL Linux Debian
+	MENU LABEL ->> Install Linux - ^Debian
+	TEXT HELP
+  This menu item will provide install & booting options for versions
+  of the Debian "Linux" Distro.
+
+  <F1> - Show MENU Description / Help for this menu system
+	ENDTEXT
+	KERNEL bin/vesamenu.c32
+	APPEND pxelinux.cfg/debian
+
 LABEL Linux Open-SUSE
 	MENU LABEL ->> Install Linux - ^Open-SUSE
 	TEXT HELP
@@ -69,6 +69,28 @@ LABEL Linux Open-SUSE
 	ENDTEXT
 	KERNEL bin/vesamenu.c32
 	APPEND pxelinux.cfg/open-suse
+
+LABEL Linux Red-Hat
+	MENU LABEL ->> Install Linux - ^Red-Hat
+	TEXT HELP
+  This menu item will provide install & booting options for versions
+  of the Red-Hat "Linux" Distro.
+
+  <F1> - Show MENU Description / Help for this menu system
+	ENDTEXT
+	KERNEL bin/vesamenu.c32
+	APPEND pxelinux.cfg/red-hat
+
+LABEL Linux Ubuntu
+	MENU LABEL ->> Install Linux - ^Ubuntu
+	TEXT HELP
+  This menu item will provide install & booting options for versions
+  of the Ubuntu "Linux" Distro.
+
+  <F1> - Show MENU Description / Help for this menu system
+	ENDTEXT
+	KERNEL bin/vesamenu.c32
+	APPEND pxelinux.cfg/ubuntu
 
 MENU SEPARATOR
 
