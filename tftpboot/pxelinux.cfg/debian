@@ -12,8 +12,14 @@ MENU SEPARATOR
 
 LABEL Debian 7 x86_64 PreSeeding
 	MENU LABEL Debian 7 x86_64 PreSeeding
-	KERNEL images/debian/7/x86_64/vmlinuz
+	KERNEL images/debian/7/x86_64/linux
 	INITRD images/debian/7/x86_64/initrd.gz
 	APPEND auto domain=home locale=en_US keymap=us url=tftp://<PXE-SERVER>/config/debian-7-preseed.cfg
+
+## NOTE: The kernel and initrd can be installed using these steps
+#  # mkdir -p /var/lib/tftpboot/images/debian/7/x86_64
+#  # cd /var/lib/tftpboot/images/debian/7/x86_64
+#  # wget http://ftp.nl.debian.org/debian/dists/wheezy/main/installer-amd64/current/images/netboot/debian-installer/amd64/linux
+#  # wget http://ftp.nl.debian.org/debian/dists/wheezy/main/installer-amd64/current/images/netboot/debian-installer/amd64/initrd.gz
 
 # END
