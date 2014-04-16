@@ -699,8 +699,12 @@ images/memtest86+-5.01.iso.gz
       wget https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item} || \
       curl https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item} > $FIL
 
+      WGETST=$?
+
       [ -f $FIL ] && grep -q '<PXE-SERVER>' $FIL && \
       sed -i "/<PXE-SERVER>/ s=<PXE-SERVER>=${PXEIP=}=" $FIL
+
+      [ $WGETST -eq 0 ]
     )
   done >> ${log}.$$ 2>&1
 
