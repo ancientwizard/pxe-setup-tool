@@ -24,4 +24,6 @@
  Working Menu Items:
    Debian - Auto builds a minimal Debian server from scratch using preseeding.
             It prompts you with a suggested hostname which you could fully automate.
+            You will find instructions in the menu file to fulfill kernel & initrd
+            requirements.
 
