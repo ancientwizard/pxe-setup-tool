@@ -14,8 +14,6 @@ LABEL Debian 7 x86_64 PreSeeding
 	MENU LABEL Debian 7 x86_64 PreSeeding
 	KERNEL images/debian/7/x86_64/vmlinuz
 	INITRD images/debian/7/x86_64/initrd.gz
-	APPEND auto domain=home locale=en_US keymap=us url=tftp://{PXESERVER}/config/debian-7-preseed.cfg
-
-#	APPEND auto domain=home locale=en_US keymap=us url=http://192.168.1.9/sys-build/preseed/debian-7-preseed.cfg
+	APPEND auto domain=home locale=en_US keymap=us url=tftp://<PXE-SERVER>/config/debian-7-preseed.cfg
 
 # END

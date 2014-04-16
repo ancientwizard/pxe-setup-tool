@@ -655,6 +655,7 @@ esac
 (
   log=/tmp/pxe-populate-tftpboot.log
   TFTPBOOTTGT=/var/lib/tftpboot
+  PXEIP=$(getNicIP   $NIC)
 
   [ -d $TFTPBOOTTGT ] || { echo 'Failed to find tftpboot dir'; exit 1; }
 
@@ -665,8 +666,11 @@ esac
     cat <<!EOF
 help/help.txt
 help/version.txt
+config/debian-7-preseed.cfg
 pxelinux.cfg/default
 pxelinux.cfg/default.jpg
+pxelinux.cfg/debian
+pxelinux.cfg/debian.jpg
 pxelinux.cfg/cent-os
 pxelinux.cfg/cent-os.jpg
 pxelinux.cfg/open-suse
@@ -694,6 +698,9 @@ images/memtest86+-5.01.iso.gz
       [ -f $FIL ] || \
       wget https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item} || \
       curl https://raw.githubusercontent.com/ancientwizard/pxe-setup-tool/master/tftpboot/${item} > $FIL
+
+      [ -f $FIL ] && grep -q '<PXE-SERVER>' $FIL && \
+      sed -i "/<PXE-SERVER>/ s=<PXE-SERVER>=${PXEIP=}=" $FIL
     )
   done >> ${log}.$$ 2>&1
 
