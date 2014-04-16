@@ -592,12 +592,10 @@ case $OS_NAME in
   openSUSE)
     #-- (openSUSE)
     msg='Configure Firewall Rules'
-    showMessage "$msg"
     for svc in 'service:dhcp-server' 'service:tftp'
     do
       processAction "Firewall $svc" "/sbin/yast2 firewall services add service=$svc zone=EXT" $log || exit $?
     done
-    showStatus $? "check: ${log}.$$" || exit $?
   ;;
 
   RedHat|CentOS)
